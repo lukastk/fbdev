@@ -1,0 +1,5 @@
+name: fbdev
+channels:
+  - defaults
+dependencies:
+  - python=3.10

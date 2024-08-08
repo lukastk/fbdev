@@ -1,3 +1,9 @@
+/.github
+/_proc
+.DS_Store
+
+### GitHub Python .gitignore template ###
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -1,0 +1,9 @@
+project:
+  output-dir: _docs
+
+website:
+  title: "fbdev"
+  site-url: "https://lukastk.github.io/fbdev"
+  description: "Flow based programming framework for Python"
+  repo-branch: main
+  repo-url: "https://github.com/lukastk/fbdev"
