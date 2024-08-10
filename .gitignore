@@ -1,5 +1,6 @@
 /.github
 /_proc
+/.trunk
 .DS_Store
 
 ### GitHub Python .gitignore template ###
