@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import Type, Callable, Dict, Any
 from enum import Enum
 
-from . import BaseComponent, utils, BasePort, BaseInputPort, BaseOutputPort, Edge
+from . import BaseComponent, utils, BasePort, InputPort, OutputPort, Edge
 from .utils import Expando, StateHandler, StateView
 
 # %% ../nbs/api/node.ipynb 6
@@ -28,6 +28,12 @@ class Node:
         self.component_process = None
         self._id = None  # TODO: implement Node._id
                 
+        self.__initialise()
+
+    def __initialise(self):
+        """Instantiate the component process"""
+        self.component_process = self.component_type(self)
+        
         self.config_input_edges = Expando(obj_name="config_input_edges")
         self.input_edges = Expando(obj_name="input_edges")
         self.output_edges = Expando(obj_name="output_edges")
@@ -45,12 +51,8 @@ class Node:
         }, obj_name="edge_disconnected_events")
         
         self.running = StateHandler(False)
+        self.executing = StateHandler(False)
         self._stop_running_event = asyncio.Event()
-        self.initialised = StateHandler(False)
-
-    def initialise(self):
-        """Instantiate the component process"""
-        self.component_process = self.component_type(self)
         
         for port in self.component_process.config_inputs.values():
             self.config_input_edges._attrs[port.name] = None
@@ -64,12 +66,12 @@ class Node:
             self.output_edges._attrs[port.name] = None
             self.port_states['output'][port.name] = StateHandler(PortState.OPEN, PortState)
             self._edge_disconnect_events['output'][port.name] = asyncio.Event()
-        
-        self.initialised.set(True)
-        
+                
+    def reset(self):
+        self.__initialise()
+                
     def __connect_edge(self, connection_type: str, is_input: bool, port: BasePort, edge: 'Edge'):
         edge_dict = getattr(self, f"{connection_type}_edges")
-        if not self.initialise.get(): raise Exception("Must initialise.") #TODO proper exception
         if port.name in edge_dict: raise ValueError(f"{connection_type} port '{port.name}' is already connected") #TODO proper exception
         
         edge_dict[port.name] = edge
@@ -89,7 +91,6 @@ class Node:
         
     def __disconnect_edge(self, connection_type: str, is_input: bool, port_name: str):
         edge_dict = getattr(self, f"{connection_type}_edges")
-        if not self.initialise.get(): raise Exception("Must initialise.") #TODO proper exception
         if port_name in edge_dict: raise ValueError(f"{connection_type} port '{port_name}' is already connected") #TODO proper exception
         
         edge: Edge = edge_dict[port_name]
@@ -104,7 +105,7 @@ class Node:
     def disconnect_output_edge(self, port_name: str):
         self.__disconnect_edge('output', False, port_name)
         
-    async def __handle_edge_port_connection(self, is_input:bool, edge_dict:dict, edge:Edge, port:BaseInputPort, edge_disconnect:asyncio.Event, port_is_open:asyncio.Event):
+    async def __handle_edge_port_connection(self, is_input:bool, edge_dict:dict, edge:Edge, port:BasePort, edge_disconnect:asyncio.Event, port_is_open:asyncio.Event):
         while not edge_disconnect.is_set():
             if is_input: port.load(edge.unload())
             else: edge.load(port.unload())
@@ -130,27 +131,27 @@ class Node:
         self.port_states.output[name].clear()
             
     async def start(self):
-        if not self.initialised.get():
-            raise Exception("Node has not been initialised.")
-                            
         self.running.set(True)
             
         while not self._stop_running_event.is_set():
             await self.component_process.update_config()
+            self.executing.set(True)
             await self.component_process.execute()
+            self.executing.set(False)
         
         self._stop_running_event.clear()
         self.running.set(False)
              
     def stop(self):
         self._stop_running_event.set()
+    
 
-# %% ../nbs/api/node.ipynb 15
+# %% ../nbs/api/node.ipynb 12
 class ProxyProcessNode(Node):
     def __init__(self):
         pass
 
-# %% ../nbs/api/node.ipynb 17
+# %% ../nbs/api/node.ipynb 14
 class ProcessNode(Node):
     def __init__(self):
         pass
