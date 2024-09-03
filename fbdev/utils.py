@@ -6,7 +6,7 @@
 __all__ = ['create_task_with_exception_handler', 'await_multiple_events', 'AttrContainer', 'ReadonlyEvent', 'EventHandler',
            'EventCollection', 'StateHandler', 'StateView', 'StateCollection']
 
-# %% ../nbs/api/utils.ipynb 3
+# %% ../nbs/api/utils.ipynb 4
 import asyncio
 from typing import Optional, Type, Union
 from types import MappingProxyType
@@ -15,7 +15,7 @@ import traceback
 
 import fbdev
 
-# %% ../nbs/api/utils.ipynb 5
+# %% ../nbs/api/utils.ipynb 6
 def handle_exception(task):
     try:
         task.result()
@@ -23,13 +23,13 @@ def handle_exception(task):
         print(f"Caught exception: {e}")
         traceback.print_exc()
 
-# %% ../nbs/api/utils.ipynb 6
+# %% ../nbs/api/utils.ipynb 7
 def create_task_with_exception_handler(coroutine):
     task = asyncio.create_task(coroutine)
     task.add_done_callback(handle_exception)
     return task
 
-# %% ../nbs/api/utils.ipynb 8
+# %% ../nbs/api/utils.ipynb 9
 async def await_multiple_events(*events):
     while not all([event.is_set() for event in events]): # In the off-chance that as asyncio.wait finishes, one of the events is cleared
         event_await_tasks = []
@@ -38,7 +38,7 @@ async def await_multiple_events(*events):
             event_await_tasks.append(create_task_with_exception_handler(await_event()))
         await asyncio.wait(event_await_tasks)
 
-# %% ../nbs/api/utils.ipynb 10
+# %% ../nbs/api/utils.ipynb 11
 class AttrContainer:
     def __init__(self, _attrs=None, obj_name="AttrContainer", dtype:Optional[Type]=None):
         self.idx = ()
@@ -98,7 +98,7 @@ class AttrContainer:
                 copy._set(key, value.copy())
         return copy
 
-# %% ../nbs/api/utils.ipynb 12
+# %% ../nbs/api/utils.ipynb 13
 class ReadonlyEvent:
     def __init__(self, event: asyncio.Event):
         self._event = event
@@ -109,7 +109,7 @@ class ReadonlyEvent:
     async def wait(self):
         await self._event.wait()
 
-# %% ../nbs/api/utils.ipynb 14
+# %% ../nbs/api/utils.ipynb 15
 class EventHandler:
     """Subscribable events"""
     def __init__(self, name):
@@ -132,7 +132,7 @@ class EventHandler:
     def __repr__(self):
         return str(self)
 
-# %% ../nbs/api/utils.ipynb 16
+# %% ../nbs/api/utils.ipynb 17
 class EventCollection(AttrContainer):
     def __init__(self) -> None:
         super().__init__({}, obj_name="EventCollection")
@@ -140,7 +140,7 @@ class EventCollection(AttrContainer):
     def _add_event(self, event_handler: EventHandler):
         self._set(event_handler.name, event_handler)
 
-# %% ../nbs/api/utils.ipynb 18
+# %% ../nbs/api/utils.ipynb 19
 class StateHandler:
     def __init__(self, name, current_state, state_vals=[True, False]):
         self.name = name
@@ -196,7 +196,7 @@ class StateHandler:
     def __repr__(self):
         return self.__str__()
 
-# %% ../nbs/api/utils.ipynb 20
+# %% ../nbs/api/utils.ipynb 21
 class StateView:
     def __init__(self, state_handler):
         self._state_handler: StateHandler = state_handler
@@ -222,7 +222,7 @@ class StateView:
     def __repr__(self):
         return self.__str__()
 
-# %% ../nbs/api/utils.ipynb 22
+# %% ../nbs/api/utils.ipynb 23
 class StateCollection(AttrContainer):
     def __init__(self) -> None:
         super().__init__({}, obj_name="StateCollection")

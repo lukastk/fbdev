@@ -5,7 +5,7 @@
 # %% auto 0
 __all__ = ['BaseComponent', 'ComponentFactory', 'FunctionComponentFactory', 'func_component']
 
-# %% ../nbs/api/02_component.ipynb 3
+# %% ../nbs/api/02_component.ipynb 4
 import asyncio
 from abc import ABC, abstractmethod
 import typing
@@ -17,7 +17,7 @@ from .utils import AttrContainer, create_task_with_exception_handler
 from .packet import Packet
 from .port import PortType, PortSpec, ConfigPortSpec, PortTypeSpec, PortSpecCollection, BasePort, InputPort, ConfigPort, OutputPort, PortCollection
 
-# %% ../nbs/api/02_component.ipynb 6
+# %% ../nbs/api/02_component.ipynb 7
 class BaseComponent(ABC):
     port_specs = PortSpecCollection(
         input=PortTypeSpec(),
@@ -87,7 +87,7 @@ class BaseComponent(ABC):
         if loop.is_running(): create_task_with_exception_handler(self.destroy())
         else: loop.run_until_complete(self.destroy())
 
-# %% ../nbs/api/02_component.ipynb 9
+# %% ../nbs/api/02_component.ipynb 10
 class ComponentFactory(BaseComponent):
     is_factory = True
     
@@ -116,7 +116,7 @@ class ComponentFactory(BaseComponent):
         """
         return cls._create_component_class()
 
-# %% ../nbs/api/02_component.ipynb 12
+# %% ../nbs/api/02_component.ipynb 13
 class FunctionComponentFactory(ComponentFactory):
     def __init__(self, func):
         self._func = func
@@ -206,7 +206,7 @@ class FunctionComponentFactory(ComponentFactory):
     
     
 
-# %% ../nbs/api/02_component.ipynb 13
+# %% ../nbs/api/02_component.ipynb 14
 def func_component(name=None):
     def decorator(func):
         return FunctionComponentFactory.get_component(func, name)

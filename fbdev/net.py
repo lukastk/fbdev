@@ -5,7 +5,7 @@
 # %% auto 0
 __all__ = ['Edge', 'Node', 'CompositeComponentFactory', 'Net']
 
-# %% ../nbs/api/04_net.ipynb 3
+# %% ../nbs/api/04_net.ipynb 4
 import asyncio
 from collections import deque
 from types import MappingProxyType
@@ -18,7 +18,7 @@ from .port import PortType, PortSpec, ConfigPortSpec, PortTypeSpec, PortSpecColl
 from .component import BaseComponent, ComponentFactory, PortSpec, BasePort, InputPort, OutputPort, PortCollection, PortType
 from .graph import EdgeSpec, NodeSpec, Graph, ReadonlyGraph
 
-# %% ../nbs/api/04_net.ipynb 6
+# %% ../nbs/api/04_net.ipynb 7
 class Edge:
     def __init__(self,
                  edge_spec:EdgeSpec,
@@ -114,7 +114,7 @@ class Edge:
         self.events.has_changed._trigger()
         return packets
 
-# %% ../nbs/api/04_net.ipynb 8
+# %% ../nbs/api/04_net.ipynb 9
 class Node:
     def __init__(self, node_spec:NodeSpec, parent_process):
         if node_spec.component_type.is_factory:
@@ -311,7 +311,7 @@ class Node:
         if loop.is_running(): create_task_with_exception_handler(self.destroy())
         else: loop.run_until_complete(self.destroy())
 
-# %% ../nbs/api/04_net.ipynb 10
+# %% ../nbs/api/04_net.ipynb 11
 class CompositeComponentFactory(ComponentFactory):
     def __init__(self, graph:Graph):
         super().__init__()
@@ -412,7 +412,7 @@ class CompositeComponentFactory(ComponentFactory):
             await node.destroy()
 
 
-# %% ../nbs/api/04_net.ipynb 12
+# %% ../nbs/api/04_net.ipynb 13
 class Net(Node):
     """A net is a Node that exposes some additional functionality, when its component is a composite component."""
     def __init__(self, node_spec:NodeSpec, parent_process=None):

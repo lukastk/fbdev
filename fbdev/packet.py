@@ -5,12 +5,12 @@
 # %% auto 0
 __all__ = ['NullPayload', 'Packet']
 
-# %% ../nbs/api/00_packet.ipynb 4
+# %% ../nbs/api/00_packet.ipynb 5
 import asyncio
 
 import fbdev
 
-# %% ../nbs/api/00_packet.ipynb 6
+# %% ../nbs/api/00_packet.ipynb 7
 class NullPayload:
     _instance = None
     def __new__(cls):
@@ -20,7 +20,7 @@ class NullPayload:
     def __repr__(self):
         return "<NullPayload>"
 
-# %% ../nbs/api/00_packet.ipynb 8
+# %% ../nbs/api/00_packet.ipynb 9
 class Packet:
     def __init__(self, data):
         self._consumed = False
