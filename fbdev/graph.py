@@ -12,6 +12,7 @@ from collections.abc import Hashable
 from types import MappingProxyType
 from enum import Enum
 import copy
+from IPython.display import Markdown
 
 import fbdev
 from .utils import AttrContainer
@@ -199,6 +200,12 @@ class Graph:
                 mermaid.append(f"    {tail_node} -- {tail_port_type.label}.{tail_port_name} --> {head_node}")
         
         return "\n".join(mermaid)
+    
+    def display_mermaid(self):
+        return Markdown(f"```mermaid\n{self.to_mermaid()}\n```")
+    
+    def _repr_markdown_(self):
+        return self.to_mermaid()
     
     def is_DAG(self):
         visited = set()
