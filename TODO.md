@@ -9,7 +9,7 @@
 - [ ] Running modes
   - DAG mode: First checks if the graph is a DAG, and then also enforces that all components can only be run once.
 - [ ] Way for a component to send a stop signal to the whole graph (in case, for example, a data validator component fails or something).
-  
+
 ### Major features
 
 - [ ] Serialisation
@@ -44,6 +44,7 @@
 
 - [ ] Add type hints for attributes like this: `self.config_input_edges: Dict[str, Edge] = {}`
 - [ ] `Node.address` should be in `NodeSpec`
+- [ ] Make `export_tests.py` also run `nbdev_clean` on `test_nbs`.
 
 ### Major refactors
 
