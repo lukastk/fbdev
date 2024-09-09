@@ -80,7 +80,7 @@ class PortSpec:
 class ConfigPortSpec(PortSpec):
     _NO_DEFAULT = object()  # Sentinel value for no default provided
     
-    def __init__(self, name=None, dtype=Optional[Type], data_validator=None, is_optional=False, default=_NO_DEFAULT):
+    def __init__(self, name=None, dtype:Optional[Type]=None, data_validator=None, is_optional=False, default=_NO_DEFAULT):
         super().__init__(name, PortType.CONFIG, dtype, data_validator)
         self._is_optional = is_optional
         
@@ -116,7 +116,7 @@ class ConfigPortSpec(PortSpec):
             setattr(port_spec, "_default", self._default)
         return port_spec
 
-# %% ../nbs/api/01_port.ipynb 13
+# %% ../nbs/api/01_port.ipynb 14
 class PortTypeSpec(AttrContainer):
     def __init__(self, **port_specs):
         super().__init__({}, obj_name=type(self).__name__)
@@ -158,7 +158,7 @@ class PortTypeSpec(AttrContainer):
     def copy(self):
         return PortTypeSpec(**dict(self.items()))
 
-# %% ../nbs/api/01_port.ipynb 15
+# %% ../nbs/api/01_port.ipynb 16
 # TODO perhaps should make these immutable, or dataclasses
 class PortSpecCollection:
     def __init__(self, input:PortTypeSpec=None, output:PortTypeSpec=None, config:PortTypeSpec=None, signal:PortTypeSpec=None):
@@ -229,7 +229,7 @@ class PortSpecCollection:
             signal=self.signal.copy()
         )
 
-# %% ../nbs/api/01_port.ipynb 17
+# %% ../nbs/api/01_port.ipynb 18
 class BasePort:
     def __init__(self, port_spec:PortSpec, parent):
         self._name = port_spec.name
@@ -241,7 +241,7 @@ class BasePort:
     def _validate_packet_dtype(self, packet):
         if self.dtype is not None:
             if self.dtype != packet.dtype:
-                raise TypeError(f"Packet is of type {packet.dtype.__name__}, but should be of type {self.dtype.__name__}.")
+                raise TypeError(f"Packet payload is of type {packet.dtype.__name__}, but should be of type {self.dtype.__name__}.")
             
     async def _validate_packet(self, packet):
         if self.data_validator is not None:
@@ -273,7 +273,7 @@ class BasePort:
     def __repr__(self) -> str:
         return str(self)
 
-# %% ../nbs/api/01_port.ipynb 19
+# %% ../nbs/api/01_port.ipynb 20
 class InputPort(BasePort):
     def __init__(self, port_spec:PortSpec, parent):
         super().__init__(port_spec, parent)
@@ -307,7 +307,7 @@ class InputPort(BasePort):
         packet = await self.receive()
         return await packet.consume()
 
-# %% ../nbs/api/01_port.ipynb 21
+# %% ../nbs/api/01_port.ipynb 22
 class ConfigPort(InputPort):
     def __init__(self, port_spec:PortSpec, parent):
         super().__init__(port_spec, parent)
@@ -324,7 +324,7 @@ class ConfigPort(InputPort):
     async def _receive_payload(self):
         return super().receive_payload()
 
-# %% ../nbs/api/01_port.ipynb 23
+# %% ../nbs/api/01_port.ipynb 24
 class OutputPort(BasePort):
     def __init__(self, port_spec:PortSpec, parent):
         super().__init__(port_spec, parent)
@@ -357,7 +357,7 @@ class OutputPort(BasePort):
         packet = Packet(packet_payload)
         await self.put(packet)
 
-# %% ../nbs/api/01_port.ipynb 25
+# %% ../nbs/api/01_port.ipynb 26
 class PortCollection(AttrContainer):
     def __init__(self, port_spec_collection:PortSpecCollection, parent):
         super().__init__({}, obj_name=f"{parent.__class__.__name__}.ports")

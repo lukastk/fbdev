@@ -7,7 +7,7 @@ __all__ = ['EdgeSpec', 'NodeSpec', 'Graph', 'ReadonlyGraph']
 
 # %% ../nbs/api/03_graph.ipynb 4
 from dataclasses import dataclass, replace
-from typing import Type, Optional, Union, Any
+from typing import Type, Optional, Union, Any, List
 from collections.abc import Hashable
 from types import MappingProxyType
 from enum import Enum
@@ -34,6 +34,10 @@ class EdgeSpec:
     @property
     def id(self): return self._id
     
+    @property
+    def finite_maxsize(self):
+        return self.maxsize is not None
+    
     def copy(self):
         copy = copy.copy(self)
         return copy
@@ -49,7 +53,12 @@ class NodeSpec:
     @property
     def component_type(self): return self._component_type
     @property
+    def component_name(self) : return self._component_type.__name__
+    @property
     def port_specs(self): return self._component_type.port_specs
+    
+    @property
+    def contains_graph(self): return self._component_type.contains_graph
     
     def copy(self):
         copy = copy.copy(self)
@@ -182,30 +191,108 @@ class Graph:
         g._head_connections = self._head_connections.copy()
         g._tail_connections = self._tail_connections.copy()
         return g
+
+    def to_mermaid(self, flowchart_orientation:str=''):
+        """
+        TB - Top to bottom
+        TD - Top-down/ same as top to bottom
+        BT - Bottom to top
+        RL - Right to left
+        LR - Left to right
+        """
+
+        def tabs(add_tabs): return (add_tabs) * '    '
+        def fmt(s): return s.replace('.', '__CHILD__').replace(':', '__PORTS__').replace('+', '__PROP__')
+        def get_node_title(node_id, node):
+            if node_id==node.component_name:
+                return f"{node_id}[]"
+            elif node_id.startswith(node.component_name):
+                return f"{node_id}[...{node_id[len(node.component_name):]}]"
+            else:
+                return f"{node_id}[{node.component_name}]"
+        port_type_to_shape = {
+            PortType.INPUT: '{{%s}}',
+            PortType.OUTPUT: '([%s])',
+            PortType.CONFIG: '[(%s)]',
+        }
+        mermaid_classes = [
+            'classDef subgraph_zone fill:#111',
+            'classDef loose_edge fill:#f00',
+        ]
+        mermaid_subgraphs = []
+        mermaid_edges = []
+        mermaid_class_assignments = { l.split()[1] : [] for l in mermaid_classes }
+
+        def _mermaid_helper(graph, graph_id, tab_level):
+            def tabs(add_tabs): return (tab_level+add_tabs) * '    '
+            
+            for node_id, node in graph.nodes.items():
+                if node_id == graph.GRAPH_ID:
+                    raise ValueError("Found child node with `node_id=GRAPH_ID`")
+                node_address = f"{graph_id}.{node_id}"
+                mermaid_subgraphs.append(f'{tabs(0)}subgraph {fmt(node_address)}["{get_node_title(node_id, node)}"]')
+                
+                # Subgraphs
+                if node.contains_graph:
+                    mermaid_subgraphs.append(f'{tabs(1)}subgraph {fmt(node_address+"+children")}[" "]')
+                    _mermaid_helper(graph.nodes[node_id].component_type._graph, node_address, tab_level+2)
+                    mermaid_subgraphs.append(f'{tabs(1)}end')
+                    mermaid_class_assignments['subgraph_zone'].append(f"{node_address}+children")
+                
+                # Ports
+                #if node.contains_graph: mermaid_subgraphs.append(f'{tabs(1)}subgraph {fmt(node_address+"+ports")}[" "]')
+                for port_spec in node.port_specs.iter_ports():
+                    address = f"{graph_id}.{node_id}:{port_spec.port_type.label}.{port_spec.name}"
+                    name = port_spec.name
+                    title = port_type_to_shape[port_spec.port_type] % name
+                    tabn = 2 if node.contains_graph else 1
+                    mermaid_subgraphs.append(f'{tabs(tabn)}{fmt(address)}{title}')
+                #if node.contains_graph: mermaid_subgraphs.append(f'{tabs(1)}end')
+                    
+                mermaid_subgraphs.append(f'{tabs(0)}end')
+                        
+            for edge_id, edge in graph.edges.items():
+                head_conn = graph._edge_to_head_connections.get(edge_id)
+                tail_conn = graph._edge_to_tail_connections.get(edge_id)
+                
+                if head_conn:
+                    head_node, head_port_type, head_port_name = head_conn
+                    if head_node == graph.GRAPH_ID: to_address = fmt(f"{graph_id}:{head_port_type.label}.{head_port_name}")
+                    else: to_address = fmt(f"{graph_id}.{head_node}:{head_port_type.label}.{head_port_name}")
+                if tail_conn:
+                    tail_node, tail_port_type, tail_port_name = tail_conn
+                    if tail_node == graph.GRAPH_ID: from_address = fmt(f"{graph_id}:{tail_port_type.label}.{tail_port_name}")
+                    else: from_address = fmt(f"{graph_id}.{tail_node}:{tail_port_type.label}.{tail_port_name}")
+                    
+                if head_conn and tail_conn:
+                    arrow = '-.->' if graph.GRAPH_ID in [tail_node, head_node] else '-->'
+                    if edge.finite_maxsize: mermaid_edges.append(f"{from_address} {arrow}|{edge.maxsize}| {to_address}")
+                    else: mermaid_edges.append(f"{from_address} {arrow} {to_address}")
+                else:
+                    if head_conn: mermaid_class_assignments['loose_edge'].append(to_address)
+                    elif tail_conn: mermaid_class_assignments['loose_edge'].append(from_address)
     
-    def to_mermaid(self):
-        mermaid = ["graph TD"]
+        _mermaid_helper(self, self.GRAPH_ID, 1)
         
-        # Add nodes
-        for node_id, node in self.nodes.items():
-            mermaid.append(f"    {node_id}[{node.component_type.__name__}]")
+        mermaid_graph_ports = []
+        for port_spec in self.port_specs.iter_ports():
+            address = f"{self.GRAPH_ID}:{port_spec.port_type.label}.{port_spec.name}"
+            name = port_spec.name
+            title = port_type_to_shape[port_spec.port_type] % name
+            mermaid_graph_ports.append(fmt(f'{tabs(2)}{address}{title}'))
+            
+        mermaid_classes = list(map(lambda l: f"{tabs(1)}{l}", mermaid_classes))
+        mermaid_edges = list(map(lambda l: f"{tabs(1)}{l}", mermaid_edges))
+        mermaid_class_assignments = {class_name : list(map(fmt, mermaid_class_assignments[class_name])) for class_name in mermaid_class_assignments}
+        _mermaid_class_assignments = [f"{tabs(1)}class {','.join(mermaid_class_assignments[class_name])} {class_name}" for class_name in mermaid_class_assignments if mermaid_class_assignments[class_name]]
         
-        # Add edges
-        for edge_id, edge in self.edges.items():
-            head_conn = self._edge_to_head_connections.get(edge_id)
-            tail_conn = self._edge_to_tail_connections.get(edge_id)
-            if head_conn and tail_conn:
-                head_node, head_port_type, head_port_name = head_conn
-                tail_node, tail_port_type, tail_port_name = tail_conn
-                mermaid.append(f"    {tail_node} -- {tail_port_type.label}.{tail_port_name} --> {head_node}")
-        
+        mermaid = [f"flowchart {flowchart_orientation}"] + mermaid_classes + [""] + mermaid_subgraphs + [""] + mermaid_graph_ports + [""] + mermaid_edges + [""] + _mermaid_class_assignments
         return "\n".join(mermaid)
     
     def display_mermaid(self):
         return Markdown(f"```mermaid\n{self.to_mermaid()}\n```")
     
-    def _repr_markdown_(self):
-        return self.to_mermaid()
+    def _repr_markdown_(self): return f"```mermaid\n{self.to_mermaid()}\n```"
     
     def is_DAG(self):
         visited = set()
@@ -268,4 +355,8 @@ class ReadonlyGraph:
     @property
     def graph_tail_connections(self): return self._graph.graph_tail_connections
     
+    def to_mermaid(self): return self._graph.to_mermaid()
+    def display_mermaid(self): return self._graph.display_mermaid()
+    def _repr_markdown_(self): return self._graph._repr_markdown_()
+    def is_DAG(self): return self._graph.is_DAG()
     def copy(self) -> Graph: return self._graph.copy()

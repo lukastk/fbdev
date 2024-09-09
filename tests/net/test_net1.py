@@ -12,7 +12,8 @@ import asyncio
 
 from fbdev.component import func_component, PortSpecCollection, PortTypeSpec, PortSpec, PortType
 from fbdev.graph import Graph, NodeSpec, EdgeSpec
-from fbdev.net import Net
+from fbdev.node import Node, CompositeComponentFactory
+from fbdev.execute import BatchExecutor
 
 # %% ../../test_nbs/nets/test_net1.ipynb 3
 @func_component()
@@ -35,8 +36,8 @@ def sender(a:int):
     return a
     
 g = Graph(PortSpecCollection(
-    input=PortTypeSpec(in1=PortSpec(dtype=int)),
-    output=PortTypeSpec(out=PortSpec(dtype=int))
+    input=PortTypeSpec(graph_in=PortSpec(dtype=int)),
+    output=PortTypeSpec(graph_out=PortSpec(dtype=int))
 ))
 
 g.add_node(NodeSpec(add_one))
@@ -50,7 +51,7 @@ g.add_edge(EdgeSpec())
 g.add_edge(EdgeSpec())
 g.add_edge(EdgeSpec())
 
-g.connect_edge_to_graph_port(PortType.INPUT, 'in1', 0)
+g.connect_edge_to_graph_port(PortType.INPUT, 'graph_in', 0)
 g.connect_edge_to_node('add_one', PortType.INPUT, 'a', 0)
 
 g.connect_edge_to_node('add_one', PortType.OUTPUT, 'out', 1)
@@ -63,29 +64,32 @@ g.connect_edge_to_node('copier', PortType.OUTPUT, 'out1', 3)
 g.connect_edge_to_node('sender', PortType.INPUT, 'a', 3)
 
 g.connect_edge_to_node('sender', PortType.OUTPUT, 'out', 4)
-g.connect_edge_to_graph_port(PortType.OUTPUT, 'out', 4)
+g.connect_edge_to_graph_port(PortType.OUTPUT, 'graph_out', 4)
 
 # %% ../../test_nbs/nets/test_net1.ipynb 5
 async def _test_net1_execution():
-    output = await Net.async_execute_graph(g, 1)
-    assert output['out'] is not None
+    output = await BatchExecutor.async_execute_graph(g, 1)
+    assert output['graph_out'] is not None
    
 def test_net1_execution():
     asyncio.run(_test_net1_execution())    
 
 # %% ../../test_nbs/nets/test_net1.ipynb 7
 async def _test_net1_addresses():
-    net = Net.from_graph(g)
+    component_type = CompositeComponentFactory.get_component(g)
+    net_spec = NodeSpec(component_type)
+    net = Node(net_spec, parent_comp_process=None)
     net.initialise()
     net.run()
     await net.states.running.wait(True)
 
     assert net.address == 'Net(net)'
     assert net.component_process.address == 'Net(net)<CompositeComponent>'
-    assert net.nodes['add_one'].address == 'Net(net).Node(add_one)'
-    assert net.nodes['add_one'].component_process.address == 'Net(net).Node(add_one)<add_one>'
+    assert net.component_process.nodes['add_one'].address == 'Net(net).Node(add_one)'
+    assert net.component_process.nodes['add_one'].component_process.address == 'Net(net).Node(add_one)<add_one>'
     
-    await net.async_stop()
+    await net._run_with_exception_monitoring(net.async_stop())
+    await net._run_with_exception_monitoring(net.destroy())
     
 def test_net1_addresses():
     asyncio.run(_test_net1_addresses())
