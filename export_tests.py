@@ -1,7 +1,6 @@
 from nbdev.export import nb_export
 from nbdev.clean import clean_nb
 from execnb.nbio import read_nb, write_nb
-from nbdev.process import first_code_ln
 import glob
 import os
 
