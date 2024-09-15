@@ -51,6 +51,17 @@ class NodeSpec:
     @property
     def id(self): return self._id
     @property
+    def name(self):
+        if self.id is None:
+            _id = Graph.GRAPH_ID
+        elif self.id==self.component_name:
+            _id = ""
+        elif self.id.startswith(self.component_name):
+            _id = "..." + self.id[len(self.component_name):]
+        else:
+            _id = self.id
+        return f"Node({self.component_name})[{_id}]"
+    @property
     def component_type(self): return self._component_type
     @property
     def component_name(self) : return self._component_type.__name__
@@ -67,7 +78,7 @@ class NodeSpec:
 
 # %% ../nbs/api/03_graph.ipynb 13
 class Graph:
-    GRAPH_ID=0
+    GRAPH_ID='net'
     
     def __init__(self, port_spec_collection:PortSpecCollection):
         self._port_specs = port_spec_collection
@@ -104,7 +115,7 @@ class Graph:
     def edge_to_tail_connections(self): return MappingProxyType(self._edge_to_tail_connections)
         
     def add_node(self, node, id=None):
-        if id == self.GRAPH_ID: raise RuntimeError("Node id '0' is reserved for the graph itself.")
+        if id == self.GRAPH_ID: raise RuntimeError(f"Node id '{self.GRAPH_ID}' is reserved for the graph itself.")
         if id:
             node._id = id
         else:
@@ -178,10 +189,10 @@ class Graph:
         del edge_to_connections[edge_id]
         
     def connect_edge_to_graph_port(self, port_type: PortType, port_name: str, edge_id:Hashable):
-        self.connect_edge_to_node(0, port_type, port_name, edge_id)
+        self.connect_edge_to_node(self.GRAPH_ID, port_type, port_name, edge_id)
         
     def disconnect_edge_from_graph_port(self, port_type: PortType, port_name: str):
-        self.disconnect_edge_from_graph_port(0, port_type, port_name)
+        self.disconnect_edge_from_graph_port(self.GRAPH_ID, port_type, port_name)
             
     def copy(self):
         g = super().copy()
@@ -203,13 +214,6 @@ class Graph:
 
         def tabs(add_tabs): return (add_tabs) * '    '
         def fmt(s): return s.replace('.', '__CHILD__').replace(':', '__PORTS__').replace('+', '__PROP__')
-        def get_node_title(node_id, node):
-            if node_id==node.component_name:
-                return f"{node_id}[]"
-            elif node_id.startswith(node.component_name):
-                return f"{node_id}[...{node_id[len(node.component_name):]}]"
-            else:
-                return f"{node_id}[{node.component_name}]"
         port_type_to_shape = {
             PortType.INPUT: '{{%s}}',
             PortType.OUTPUT: '([%s])',
@@ -230,7 +234,7 @@ class Graph:
                 if node_id == graph.GRAPH_ID:
                     raise ValueError("Found child node with `node_id=GRAPH_ID`")
                 node_address = f"{graph_id}.{node_id}"
-                mermaid_subgraphs.append(f'{tabs(0)}subgraph {fmt(node_address)}["{get_node_title(node_id, node)}"]')
+                mermaid_subgraphs.append(f'{tabs(0)}subgraph {fmt(node_address)}["{node.name}"]')
                 
                 # Subgraphs
                 if node.contains_graph:

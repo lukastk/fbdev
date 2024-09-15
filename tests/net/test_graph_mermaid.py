@@ -12,15 +12,14 @@ import asyncio
 
 from fbdev.component import func_component, PortSpecCollection, PortTypeSpec, PortSpec, PortType, DummyComponentFactory
 from fbdev.graph import Graph, NodeSpec, EdgeSpec
-from fbdev.node import Node, CompositeComponentFactory
-from fbdev.execute import BatchExecutor
+from fbdev.node import Node, GraphComponentFactory
 
 # %% ../../test_nbs/graph/test_graph_mermaid.ipynb 3
 sub_graph = Graph(PortSpecCollection(
     input=PortTypeSpec(subgraph_in=PortSpec(dtype=int)),
     output=PortTypeSpec(subgraph_out=PortSpec(dtype=int))
 ))
-sub_graph_component = CompositeComponentFactory.get_component(sub_graph)
+sub_graph_component = GraphComponentFactory.get_component(sub_graph)
 sub_graph_node = NodeSpec(sub_graph_component)
 dummy_component = DummyComponentFactory.get_component(
     inputs=['in'],

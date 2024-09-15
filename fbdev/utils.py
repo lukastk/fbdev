@@ -4,7 +4,7 @@
 
 # %% auto 0
 __all__ = ['is_in_event_loop', 'await_multiple_events', 'await_any_event', 'AttrContainer', 'ReadonlyEvent', 'EventHandler',
-           'EventCollection', 'StateHandler', 'StateView', 'StateCollection', 'TaskManager']
+           'EventCollection', 'StateHandler', 'StateView', 'StateCollection', 'TaskManager', 'AddressableMixin']
 
 # %% ../nbs/api/utils.ipynb 4
 import asyncio
@@ -13,6 +13,7 @@ from types import MappingProxyType
 import copy
 import traceback
 import inspect
+from abc import ABC, abstractmethod
 
 import fbdev
 
@@ -348,3 +349,29 @@ class TaskManager:
         qualnames = [task.get_coro().__qualname__ for task in self._tasks]
         qualname_counts = {name : qualnames.count(name) for name in set(qualnames)}
         return qualname_counts
+
+# %% ../nbs/api/utils.ipynb 29
+class AddressableMixin(ABC):     
+    @property
+    @abstractmethod
+    def id(self): raise NotImplementedError("Must be implemented by subclass.")
+    
+    @property
+    def parent(self): raise NotImplementedError("Must be implemented by subclass.")
+    
+    @property
+    @abstractmethod
+    def name(self): raise NotImplementedError("Must be implemented by subclass.")
+       
+    @property
+    def graph_elem_type(self): return self._graph_elem_type
+       
+    @property
+    def name_address(self):
+        if self.parent is None: return self.name
+        else: return f"{self.parent.name_address} > {self.name}"
+        
+    @property
+    def address(self):
+        prefix = () if self.parent is None else self.parent.address
+        return prefix + ((self._graph_elem_type, self.id),)

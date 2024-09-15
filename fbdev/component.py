@@ -13,7 +13,7 @@ from typing import Type, Optional, Callable, Any, Union, Tuple, Coroutine, List
 from enum import Enum
 import inspect
 
-from .utils import AttrContainer, TaskManager
+from .utils import AttrContainer, TaskManager, AddressableMixin
 from .packet import Packet
 from .port import PortType, PortSpec, ConfigPortSpec, PortTypeSpec, PortSpecCollection, BasePort, InputPort, ConfigPort, OutputPort, PortCollection
 
@@ -50,16 +50,9 @@ class BaseComponent(ABC):
         for config_port_name, config_port_spec in self.port_specs.config.items():
             if config_port_spec.has_default:
                 self.set_config(config_port_name, config_port_spec.default)
-         
-    @property
-    def address(self):
-        if self._parent_node is not None:
-            return f"{self._parent_node.address}<{self.__class__.__name__}>"
-        else:
-            raise RuntimeError("Component has no parent node, and therefore no address.")
                     
     async def set_config(self, name:str, packet:Packet):
-        value = await packet.consume()
+        value = await self.consume_packet(packet)
         if self.port_specs.config[name].has_dtype and type(value) != self.port_specs.config[name].dtype:
             raise TypeError(f"Config value {value} is not of type {self.port_specs.config[name].dtype}, in config port {name}.")
         if self.port_specs.config[name].has_data_validator and not self.port_specs.config[name].data_validator(value):
@@ -75,6 +68,12 @@ class BaseComponent(ABC):
                configured = False
                break
         return configured
+    
+    def create_packet(self, data:Any):
+        return self._parent_node._packet_handler._create(data)
+    
+    async def consume_packet(self, packet:Packet):
+        return await self._parent_node._packet_handler._consume(packet)
     
     @classmethod
     def is_from_factory(cls):
@@ -148,7 +147,7 @@ class DummyComponentFactory(ComponentFactory):
         for port_name, port in self.ports.output.items():
             if port.dtype: data = port.dtype()
             else: data = None
-            packet = Packet(data)
+            packet = self.create_packet(data)
             await port.put(packet)
 
 # %% ../nbs/api/02_component.ipynb 17
@@ -221,7 +220,7 @@ class FunctionComponentFactory(ComponentFactory):
         kwargs = {}
         for port_name, port in self.ports.input.items():
             packet = await port.receive()
-            packet_payload = await packet.consume()
+            packet_payload = await self.consume_packet(packet)
             kwargs[port_name] = packet_payload
         for config_name, config_value in self.ports.config.items():
             kwargs[config_name] = config_value
@@ -229,14 +228,14 @@ class FunctionComponentFactory(ComponentFactory):
         output = self._func(**kwargs)
         
         if len(self.ports.output) == 1:
-            await self.ports.output.out.put(Packet(output))
+            await self.ports.output.out.put(self.create_packet(output))
         elif len(self.ports.output) > 1:
             if type(output) == tuple or type(output) == list:
                 for output_i, port_i in zip(output, self.ports.output.values()):
-                    await port_i.put(Packet(output_i))
+                    await port_i.put(self.create_packet(output_i))
             elif type(output) == dict:
                 for output_key, output_val in output.items():
-                    await self.ports.output[output_key].put(Packet(output_val))
+                    await self.ports.output[output_key].put(self.create_packet(output_val))
             else:
                 raise RuntimeError(f"Unsupported output type {type(output)}.")    
     
