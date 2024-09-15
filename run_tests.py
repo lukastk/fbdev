@@ -4,6 +4,12 @@ from execnb.nbio import read_nb, write_nb
 import glob
 import os
 
+# Run nbdev_prepare
+print("Running nbdev_prepare...")
+os.system("nbdev_prepare")
+
+print("\nRunning cleaning and exporting tests...")
+
 # Find all .ipynb files in nbs/tests recursively
 notebook_files = glob.glob('test_nbs/**/*.ipynb', recursive=True)
 
@@ -15,4 +21,5 @@ for notebook_file in notebook_files:
     nb_export(notebook_file, 'tests') # Export notebook file
     
 # Run tests
+print("\nRunning pytest...")
 os.system("pytest")
