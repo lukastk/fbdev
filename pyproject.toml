@@ -14,6 +14,7 @@ python = "^3.10"
 nbdev = "^2.3.27"
 jupyter = "^1.0.0"
 pytest = "^8.3.2"
+pylint = "^3.2.7"
 
 [build-system]
 requires = ["poetry-core"]
