@@ -13,7 +13,7 @@ import asyncio
 from fbdev.component import func_component, PortSpecCollection, PortTypeSpec, PortSpec, PortType
 from fbdev.graph import Graph, NodeSpec, EdgeSpec
 from fbdev.node import Node, GraphComponentFactory
-from fbdev.runtime import BatchRuntime
+from fbdev.runtime import BatchExecutor
 
 # %% ../../test_nbs/nets/test_net1.ipynb 3
 @func_component()
@@ -68,7 +68,7 @@ g.connect_edge_to_graph_port(PortType.OUTPUT, 'graph_out', 4)
 
 # %% ../../test_nbs/nets/test_net1.ipynb 5
 async def _test_net1_execution():
-    output = await BatchRuntime.async_execute_graph(g, 1)
+    output = await BatchExecutor.async_execute_graph(g, 1)
     assert output['graph_out'] is not None
    
 def test_net1_execution():
@@ -83,12 +83,12 @@ async def _test_net1_addresses():
     net.run()
     await net.states.running.wait(True)
 
-    assert net.name_address == 'Node(GraphComponent)[net]'
-    assert net.address ==(('NODE', 'net'),)
-    assert net.component_process.edges[0].name_address == "Node(GraphComponent)[net] > Edge[0]"
-    assert net.component_process.edges[0].address == (('NODE', 'net'), ('EDGE', 0))
-    assert net.component_process.nodes['add_one'].name_address == 'Node(GraphComponent)[net] > Node(add_one)[]'
-    assert net.component_process.nodes['add_one'].address == (('NODE', 'net'), ('NODE', 'add_one'))
+    assert net.rich_address == '>GraphComponent[net]'
+    assert net.address == '>net'
+    assert net.component_process.edges['0'].rich_address == ">GraphComponent[net]|0"
+    assert net.component_process.edges['0'].address == ">net|0"
+    assert net.component_process.nodes['add_one'].rich_address == '>GraphComponent[net]>add_one[]'
+    assert net.component_process.nodes['add_one'].address == '>net>add_one'
     
     await net._execute_with_exception_monitoring(net.async_stop())
     await net._execute_with_exception_monitoring(net.destroy())
