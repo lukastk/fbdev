@@ -15,7 +15,7 @@ import copy
 from IPython.display import Markdown
 
 import fbdev
-from .utils import AttrContainer
+from .utils import AttrContainer, AddressableMixin
 from .port import PortType, PortSpec, PortTypeSpec, PortSpecCollection
 from .component import BaseComponent
 
@@ -51,7 +51,7 @@ class NodeSpec:
     @property
     def id(self): return self._id
     @property
-    def name(self):
+    def rich_id(self):
         if self.id is None:
             _id = Graph.GRAPH_ID
         elif self.id==self.component_name:
@@ -60,7 +60,8 @@ class NodeSpec:
             _id = "..." + self.id[len(self.component_name):]
         else:
             _id = self.id
-        return f"Node({self.component_name})[{_id}]"
+        return f"{self.component_name}[{_id}]"
+    
     @property
     def component_type(self): return self._component_type
     @property
@@ -76,7 +77,7 @@ class NodeSpec:
         copy._component_type = self._component_type
         return copy
 
-# %% ../nbs/api/03_graph.ipynb 13
+# %% ../nbs/api/03_graph.ipynb 12
 class Graph:
     GRAPH_ID='net'
     
@@ -116,8 +117,7 @@ class Graph:
         
     def add_node(self, node, id=None):
         if id == self.GRAPH_ID: raise RuntimeError(f"Node id '{self.GRAPH_ID}' is reserved for the graph itself.")
-        if id:
-            node._id = id
+        if id: node._id = id
         else:
             num_twins = sum(1 for _node in self.nodes.values() if _node.component_type == node.component_type)
             if num_twins > 0:
@@ -125,12 +125,14 @@ class Graph:
             else:
                 node._id = node.component_type.__name__
         if node.id in self.nodes: raise RuntimeError(f"Node '{node.id}' already exists.")
+        AddressableMixin.validate_id(node.id)
         self._nodes[node.id] = node
         return node.id
         
     def add_edge(self, edge: EdgeSpec, id=None):
-        edge._id = id or len(self.edges)
+        edge._id = id or str(len(self.edges))
         if edge.id in self.edges: raise RuntimeError(f"Edge '{edge.id}' already exists.")
+        AddressableMixin.validate_id(edge.id)
         self._edges[edge.id] = edge
         return edge.id
         
@@ -151,6 +153,8 @@ class Graph:
         del self.edges[edge_id]
         
     def connect_edge_to_node(self, node_id:Hashable, port_type: Union[PortType, str], port_name: str, edge_id:Hashable):
+        if type(node_id) == int: node_id = str(node_id)
+        if type(edge_id) == int: edge_id = str(edge_id)
         node_is_graph = node_id == self.GRAPH_ID
         node = self if node_is_graph else self.nodes[node_id]
         edge = self.edges[edge_id]
@@ -171,6 +175,7 @@ class Graph:
         edge_to_connections[edge_id] = (node_id,port_type,port_name)
 
     def disconnect_edge_from_node(self, node_id:Hashable, port_type: Union[PortType, str], port_name: str):
+        if type(node_id) == int: node_id = str(node_id)
         node_is_graph = node_id == self.GRAPH_ID
         node = self if node_is_graph else self.nodes[node_id]
         if type(port_type) == str: port_type = PortType.get(port_type)
@@ -193,6 +198,20 @@ class Graph:
         
     def disconnect_edge_from_graph_port(self, port_type: PortType, port_name: str):
         self.disconnect_edge_from_graph_port(self.GRAPH_ID, port_type, port_name)
+            
+    def connect_nodes(self, node1_id:Hashable, port_type1: Union[PortType, str], port_name1: str,
+                      node2_id:Hashable, port_type2: Union[PortType, str], port_name2: str,
+                      edge:EdgeSpec=None):
+        edge = edge or EdgeSpec()
+        edge_id = self.add_edge(edge)
+        self.connect_edge_to_node(node1_id, port_type1, port_name1, edge_id)
+        self.connect_edge_to_node(node2_id, port_type2, port_name2, edge_id)
+        
+    def connect_node_to_graph_port(self, node_id:Hashable, port_type: PortType, port_name: str,
+                                   graph_port_type: PortType, graph_port_name: str,
+                                   edge:EdgeSpec=None):
+        edge = edge or EdgeSpec()
+        self.connect_nodes(node_id, port_type, port_name, self.GRAPH_ID, graph_port_type, graph_port_name, edge)
             
     def copy(self):
         g = super().copy()
@@ -234,7 +253,7 @@ class Graph:
                 if node_id == graph.GRAPH_ID:
                     raise ValueError("Found child node with `node_id=GRAPH_ID`")
                 node_address = f"{graph_id}.{node_id}"
-                mermaid_subgraphs.append(f'{tabs(0)}subgraph {fmt(node_address)}["{node.name}"]')
+                mermaid_subgraphs.append(f'{tabs(0)}subgraph {fmt(node_address)}["{node.rich_id}"]')
                 
                 # Subgraphs
                 if node.contains_graph:
@@ -336,8 +355,33 @@ class Graph:
                 if is_cyclic(node_id):
                     return False
         return True
+    
+    def get_by_address(self, address:str):
+        if not address.startswith(f"{fbdev.node.Node._address_separator}{self.GRAPH_ID}"): raise ValueError(f"Address '{address}' does not start with '{self.GRAPH_ID}'.")
+        curr_elem = None
+        curr_elem_type = None
+        curr_graph = self
+        it = AddressableMixin.iter_address(address)
+        next(it) # Skip first element, as it is the net
+        for elem_type, elem_id in it:
+            if curr_elem is None:
+                curr_graph = self
+            else:
+                if curr_elem_type != "Node":
+                    raise ValueError(f"Address '{address}' refers to child nodes '{curr_elem.id}', which is not a node.")
+                if not issubclass(curr_elem.component_type, fbdev.node.GraphComponentFactory):
+                    raise ValueError(f"Address '{address}' refers to child nodes '{curr_elem.id}', which is not a subnet.")
+                curr_graph = curr_elem.component_type.graph
+                
+            if elem_type == 'Node':
+                curr_elem = curr_graph.nodes[elem_id]
+                curr_elem_type = 'Node'
+            elif elem_type == 'Edge':
+                curr_elem = curr_graph.edges[elem_id]
+                curr_elem_type = 'Edge'
+        return curr_elem
 
-# %% ../nbs/api/03_graph.ipynb 15
+# %% ../nbs/api/03_graph.ipynb 14
 class ReadonlyGraph:
     def __init__(self, graph: Graph):
         self._graph = graph

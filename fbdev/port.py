@@ -291,11 +291,11 @@ class InputPort(BasePort):
             raise RuntimeError(f"Port {self.parent_process.__class__.__name__}.{self.name} is not requesting a packet.")
         self._packet = packet
         self._received_packet.set()
+        self._requesting_packet.clear()
         
     async def receive(self):
         self._requesting_packet.set()
         await self._received_packet.wait()
-        self._requesting_packet.clear()
         self._received_packet.clear()
         packet = self._packet
         self._validate_packet_dtype(packet)
@@ -332,6 +332,7 @@ class OutputPort(BasePort):
         self._edge_available = asyncio.Event() # Set by a Node, when there is an edge available for being sent a packet
         self._ready_to_unload = asyncio.Event() # Set when the port is requesting to send out a packet
         self._package_sent = asyncio.Event() # Set when the port has returned a package to the component process
+        self._lock = asyncio.Lock()
         
     def _unload_packet(self):
         if self._packet is None:
@@ -341,8 +342,9 @@ class OutputPort(BasePort):
         packet = self._packet
         self._packet = None
         self._package_sent.set()
+        self._ready_to_unload.clear()
         return packet
-        
+    
     async def put(self, packet:Packet):
         if not isinstance(packet, Packet): raise TypeError(f"`packet` must be of type {Packet.__name__}.")
         self._validate_packet_dtype(packet)
@@ -350,7 +352,6 @@ class OutputPort(BasePort):
         self._packet = packet
         self._ready_to_unload.set()
         await self._package_sent.wait()
-        self._ready_to_unload.clear()
         self._package_sent.clear()
 
 # %% ../nbs/api/01_port.ipynb 25

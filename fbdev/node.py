@@ -23,6 +23,8 @@ __all__ = ['Edge', 'Node', 'GraphComponentFactory']
 
 # %% ../nbs/api/04_node.ipynb 7
 class Edge(AddressableMixin):
+    _address_separator = '|'
+    
     def __init__(self,
                  edge_spec:EdgeSpec,
                  parent_graph_process:GraphComponentFactory):
@@ -54,7 +56,7 @@ class Edge(AddressableMixin):
     @property
     def id(self): return self._edge_spec.id
     @property
-    def name(self): return f"Edge[{self.id}]"
+    def rich_id(self): return f"{self.id}"
     @property
     def parent(self): return self.parent_graph_process._parent_node
  
@@ -128,7 +130,9 @@ class Edge(AddressableMixin):
 
 # %% ../nbs/api/04_node.ipynb 9
 class Node(AddressableMixin):
-    def __init__(self, node_spec:NodeSpec, parent_graph_process):
+    _address_separator = '>'
+    
+    def __init__(self, node_spec:NodeSpec, parent_graph_process:GraphComponentFactory=None):
         if node_spec.component_type.is_factory:
             raise ValueError("Node cannot have a component type that is a ComponentFactory.")
         if parent_graph_process is not None and not issubclass(parent_graph_process.__class__, GraphComponentFactory):
@@ -189,7 +193,7 @@ class Node(AddressableMixin):
     @property
     def id(self): return self.node_spec.id if not self.is_net else Graph.GRAPH_ID
     @property
-    def name(self): return self.node_spec.name
+    def rich_id(self): return self.node_spec.rich_id
     
     @property
     def incoming_edges(self):
@@ -277,7 +281,7 @@ class Node(AddressableMixin):
         except asyncio.CancelledError: pass
         finally:
             if packet is not None:
-                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._handle_component_config. Id: {self.name_address}")
+                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._handle_component_config. Id: {self.rich_address}")
         
     def _start_edge_bus(self, port_type:PortType, port_name:str, edge:Edge):
         port = self.component_process.ports[port_type][port_name]
@@ -354,7 +358,7 @@ class Node(AddressableMixin):
                     await self.component_process.execute()
                     self.states._component_executing.set(False)
                     await asyncio.sleep(0)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError: # TODO should this be here? I'm not sure if it is a good idea to catch CancelledError without doing anything.
             pass
         finally:
             await self.component_process.stop_background_tasks()
@@ -477,7 +481,7 @@ class GraphComponentFactory(ComponentFactory):
         except asyncio.CancelledError: pass
         finally:
             if packet is not None:
-                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._handle_graph_in_port. Id: {self._parent_node.name_address}")
+                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._handle_graph_in_port. Id: {self._parent_node.rich_address}")
             
     async def _handle_graph_out_port(self, graph_port:OutputPort, edge:Edge):
         edge_non_empty = edge.states.empty.get_state_event(False)
@@ -494,7 +498,7 @@ class GraphComponentFactory(ComponentFactory):
         except asyncio.CancelledError: pass
         finally:
             if packet is not None:
-                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._handle_graph_out_port. Id: {self._parent_node.name_address}")
+                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._handle_graph_out_port. Id: {self._parent_node.rich_address}")
         
     async def _forward_config_into_graph(self, edge:Edge, packet:Packet):
         try:
@@ -504,7 +508,7 @@ class GraphComponentFactory(ComponentFactory):
             if not edge.states.full.get():
                 edge._load(packet) #TODO TBC on whether it is a good idea to do a last ditch effort to load the packet
             else:
-                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._forward_config_into_graph. Id: {self._parent_node.name_address}")
+                raise LostPacketError(packet, f"Packet lost in {self.__class__.__name__}._forward_config_into_graph. Id: {self._parent_node.rich_address}")
         
     def set_config(self, name:str, packet:Packet):
         """Overloads BaseComponent.set_config to forward the config to child nodes, where such edges have been defined."""

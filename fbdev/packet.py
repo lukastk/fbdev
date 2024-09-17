@@ -60,10 +60,10 @@ class PacketCreation(PacketActivity):
 
 # %% ../nbs/api/00_packet.ipynb 14
 class PacketMovement(PacketActivity):
-    def __init__(self, packet:Packet, origin: Any, dest: Any, port_type: fbdev.port.PortType, port_name: str, timestamp: datetime = None):
+    def __init__(self, packet:Packet, origin:str, dest:str, port_type: fbdev.port.PortType, port_name: str, timestamp: datetime = None):
         super().__init__(packet, timestamp)
-        self.origin:Tuple = origin
-        self.dest:Tuple = dest
+        self.origin:str = origin
+        self.dest:str = dest
         self.port_type:fbdev.port.PortType = port_type
         self.port_name:str = port_name
 
@@ -123,7 +123,7 @@ class PacketRegistry:
         return data
     
     async def _peek(self, packet:Packet):
-        data = self._data # TODO this will be changed when we also have remote packets
+        data = packet._data # TODO this will be changed when we also have remote packets
         return data
 
 # %% ../nbs/api/00_packet.ipynb 19
