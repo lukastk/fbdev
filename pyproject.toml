@@ -1,21 +1,20 @@
+[build-system]
+requires = [ "poetry-core",]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
 name = "fbdev"
-version = "0.1.0"
+version = "0.0.1"
 description = "Flow based programming framework for Python"
-authors = ["Lukas Kikuchi <lukas.kikuchi@gmail.com>"]
+authors = [ "Lukas Kikuchi <lukas.kikuchi@gmail.com>",]
 license = "Apache 2.0"
 readme = "README.md"
 
 [tool.poetry.dependencies]
 python = "^3.10"
 
-
 [tool.poetry.group.dev.dependencies]
 nbdev = "^2.3.27"
 jupyter = "^1.0.0"
 pytest = "^8.3.2"
 pylint = "^3.2.7"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
