@@ -19,7 +19,8 @@ import re
 import ast
 from pathlib import Path
 import subprocess
-import os
+import os, sys
+import importlib.util
 from abc import ABC, abstractmethod
 
 import fbdev
@@ -439,9 +440,49 @@ def extract_top_level_docstring(file_path):
     return docstring
 
 # %% ../nbs/api/utils.ipynb 46
+def find_module_root(path):
+    path = Path(path)
+    path = path if path.is_dir() else path.parent
+    is_module = '__init__.py' in [p.parts[-1] for p in path.glob('*')]
+    if not is_module: return None
+    else:
+        parent_module = find_module_root(path.parent)
+        if parent_module is None: return path
+        else: return parent_module
+
+# %% ../nbs/api/utils.ipynb 49
+def __get_module_path_hierarchy(path, hierarchy):
+    path = Path(path)
+    if not path.exists(): raise FileNotFoundError(f"No file or directory found at: {path}")
+    if path.is_file():
+        if path.suffix != '.py': raise ValueError(f"File '{path}' is not a python file.")
+        is_in_module = '__init__.py' in [p.parts[-1] for p in path.parent.glob('*')]
+        if is_in_module:
+            module_name = path.stem
+            hierarchy.append((module_name, path))
+            __get_module_path_hierarchy(path.parent, hierarchy)
+    else:
+        is_module = '__init__.py' in [p.parts[-1] for p in path.glob('*')]
+        if is_module:
+            module_name = path.stem
+            hierarchy.append((module_name, path))
+            __get_module_path_hierarchy(path.parent, hierarchy)
+        
+def get_module_path_hierarchy(path):
+    hierarchy = []
+    __get_module_path_hierarchy(path, hierarchy)
+    return hierarchy
+
+# %% ../nbs/api/utils.ipynb 52
 def get_function_from_py_file(file_path, func_name=None, args=[], is_async=False):
+    file_path = Path(file_path)
+    module_path = find_module_root(file_path)
+    is_in_module = module_path is not None
+    
     # Check if the file exists
-    if not os.path.exists(file_path):
+    if not file_path.is_file():
+        raise ValueError(f"Not a file: {file_path}")
+    if not file_path.exists():
         raise FileNotFoundError(f"No file found at: {file_path}")
     
     if func_name is None:
@@ -456,12 +497,19 @@ def get_function_from_py_file(file_path, func_name=None, args=[], is_async=False
     # Tabify
     func_body_code = '\n'.join(list(map(lambda line: f"    {line}", func_body_code.split('\n'))))
     func_code = f"{'async ' if is_async else ''}def {func_name}({', '.join(args)}):\n{func_body_code}"
-        
-    local_vars = {}
-    exec(func_code, {
-        "__name__": "__main__",
-        "__file__": file_path,
-        "__package__": 'fbdev',
-    }, local_vars)
     
-    return local_vars[func_name]
+    if is_in_module:
+        # This all is necessary to allow for relative imports in the code
+        sys.path.insert(0, module_path.parent.absolute().as_posix())
+        module_hierarchy = get_module_path_hierarchy(file_path)
+        module_hierarchy_str = '.'.join([e[0] for e in reversed(module_hierarchy)])
+        module_spec = importlib.util.spec_from_file_location(module_hierarchy_str, file_path.absolute().as_posix())
+        code_module = importlib.util.module_from_spec(module_spec)
+        locals_dict = code_module.__dict__
+    else:
+        locals_dict = {}
+        
+    exec(func_code, locals_dict)
+    if is_in_module: sys.path.pop(0)
+    
+    return locals_dict[func_name]

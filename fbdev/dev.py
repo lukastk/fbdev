@@ -144,7 +144,7 @@ async def save_graph_execution_cache(g, packet_registry_path=None):
 
 # %% ../nbs/api/06_dev.ipynb 11
 def get_component_execute_from_py_file(file_path):
-    return get_function_from_py_file(file_path, func_name='execute', args=['self'])
+    return get_function_from_py_file(file_path, func_name='execute', args=['self'], is_async=True)
 
 # %% ../nbs/api/06_dev.ipynb 13
 def comp_execute_from_py_file(file_path):
