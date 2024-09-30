@@ -1,0 +1,29 @@
+website:
+  sidebar:
+    contents:
+      - index.ipynb
+      - section: api
+        contents:
+          - api/exceptions.ipynb
+          - api/utils.ipynb
+          - section: comp
+            contents:
+              - api/comp/00_packet.ipynb
+              - api/comp/01_port.ipynb
+              - api/comp/02_base_component.ipynb
+          - section: graph
+            contents:
+              - api/graph/00_graph_spec.ipynb
+              - api/graph/01_graph_component.ipynb
+          - section: complib
+            contents:
+              - api/complib/04_func_component_factory.ipynb
+              - api/complib/exec_component.ipynb
+      - section: dev_tests
+        contents:
+          - section: test_dev1
+            contents:
+              - dev_tests/test_dev1/test_dev1.ipynb
+          - section: test_dev2
+            contents:
+              - dev_tests/test_dev2/test_dev2.ipynb

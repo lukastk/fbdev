@@ -12,7 +12,7 @@ readme = "README.md"
 repository = "https://github.com/lukastk/fbdev/"
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.9"
 
 [tool.poetry.group.dev.dependencies]
 nbdev = "^2.3.27"
