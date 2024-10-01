@@ -54,7 +54,6 @@ def get_nb_testing_comp_process(component_type: Type[BaseComponent], configs={},
     async def packet_getter(port_id):
         while True:
             await comp_process.ports[port_id]._get()
-            print('received', port_id)
         
     coros = [packet_putter(comp_process.ports.input[port_name].id, val) for port_name,val in inputs.items()]
     coros += [packet_putter(comp_process.ports.config[port_name].id, val) for port_name,val in configs.items()]
