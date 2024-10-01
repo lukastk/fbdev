@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from types import MappingProxyType
-from typing import Type, Tuple, Dict
+from typing import Type, Tuple, Dict, List
 
 import fbdev
 from ..exceptions import NodeError, EdgeError
@@ -18,70 +18,46 @@ from ..graph.graph_spec import GraphSpec, NodeSpec
 from ..graph.packet_registry import TrackedPacket
 from ..graph.net import Edge, Node, Net
 from ..graph.graph_component import GraphComponentFactory
-from . import NetRuntime
+from . import BaseNetRuntime
+from ._utils import parse_args_into_port_packets, setup_packet_senders_and_receivers
 
 # %% auto 0
 __all__ = ['BatchExecutor']
 
 # %% ../../nbs/api/02_runtime/01_batch_executor.ipynb 6
-class BatchExecutor(NetRuntime):
+class BatchExecutor(BaseNetRuntime):
     """Executes a net like a batch process (input fed in the beginning, and no input during the execution, and output is returned at the end)."""
     def __init__(self, net:Net):
         super().__init__()
         self._net:Net = net
     
-    def _setup_execution_coro(self, *args, config_vals={}, **kwargs):
-        net = self._net
+    def _setup_execution_coro(self, *args, config_vals={}, signals=set(), ports_to_get=None, **kwargs):
+        if self._net.states.started.get(): raise RuntimeError("Net has already started.")
+        if self._net.states.terminated.get(): raise RuntimeError("Cannot run terminated Net.")
         
-        if net.states.started.get(): raise RuntimeError("Net has already started.")
-        if net.states.terminated.get(): raise RuntimeError("Cannot run terminated Net.")
+        if ports_to_get is None:
+            ports_to_get = [port.id for port in self._net.ports.output.values()]
         
-        # Fill in input args
-        input_vals = {**kwargs}
-        for port_name, val in zip(net.port_specs.input.keys(), args):
-            if port_name in input_vals: raise ValueError(f"Multiple values provided for '{port_name}'.")
-            input_vals[port_name] = val
-        missing_input_args = set(net.port_specs.input.keys()) - set(input_vals.keys())
-        if len(missing_input_args) > 0:
-            raise ValueError(f"Missing values for ports '{missing_input_args}'.")
+        input_vals, config_vals, signals = parse_args_into_port_packets(self._net.port_specs, config_vals, signals, *args, **kwargs)
         
-        # Check for unexpected input args
-        extra_input_args = set(input_vals.keys()) - set(net.port_specs.input.keys())
-        if len(extra_input_args) > 0:
-            raise ValueError(f"Unexpected values for inputs '{extra_input_args}'.")
-        
-        # Check for unexpected config args
-        extra_config_args = set(config_vals.keys()) - set(net.port_specs.config.keys())
-        if len(extra_config_args) > 0:
-            raise ValueError(f"Unexpected values for configs '{extra_config_args}'.")
-                
-        async def packet_sender(port_id: PortID, val):
-            await net.component_process.put_packet(port_id, Packet(val))
-            
-        output_vals = {}
-        async def packet_receiver(port_id: PortID):
-            packet = await net.component_process.get_packet(port_id)
-            output_vals[port_id[1]] = await packet.consume()
-        
-        input_senders = [packet_sender(port.id, input_vals[port.name]) for port in net.ports.input.values()]
-        config_senders = [packet_sender(port.id, config_vals[port.name]) for port in net.ports.config.values()]
-        output_receivers = [packet_receiver(port.id) for port in net.ports.output.values()]
+        output_vals, message_vals, input_senders, config_senders, output_receivers, message_receivers = \
+            setup_packet_senders_and_receivers(self._net.ports, input_vals, config_vals, ports_to_get, *args, **kwargs)
         
         async def main():
-            await net.start()
-            await net.exec_coros(*input_senders, *config_senders, *output_receivers)
-            await net.exec_coros(net.terminate())
+            await self._net.start()
+            await self._net.exec_coros(*input_senders, *config_senders, *output_receivers, *message_receivers)
+            await self._net.exec_coros(self._net.terminate())
             
         return main(), output_vals
 
-    def execute(self, *args, config={}, **kwargs):
+    def execute(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
         """Note: this method cannot be run from within an event loop."""
-        exec_coro, output = self._setup_execution_coro(*args, config_vals=config, **kwargs)
+        exec_coro, output = self._setup_execution_coro(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
         asyncio.run(exec_coro)
         return output
     
-    async def aexecute(self, *args, config={}, **kwargs):
-        exec_coro, output = self._setup_execution_coro(*args, config_vals=config, **kwargs)
+    async def aexecute(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
+        exec_coro, output = self._setup_execution_coro(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
         await exec_coro
         return output
     

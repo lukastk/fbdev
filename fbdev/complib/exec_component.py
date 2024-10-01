@@ -18,9 +18,11 @@ __all__ = ['ExecComponent']
 # %% ../../nbs/api/03_complib/00_exec_component.ipynb 6
 class ExecComponent(BaseComponent):
     execute_after_start = True
+    loop_execution = False
     
     port_specs = PortSpecCollection(
-        PortSpec(PortType.SIGNAL, 'execute')
+        PortSpec(PortType.SIGNAL, 'execute'),
+        PortSpec(PortType.MESSAGE, 'executed')
     )
     
     def __init__(self):
@@ -31,14 +33,16 @@ class ExecComponent(BaseComponent):
         self._task_manager.create_task(self._pre_execute())
         if self.execute_after_start:
             self._task_manager.create_task(
-                self.put_packet((PortType.SIGNAL, 'execute'), Packet.get_empty())
+                self.ports[(PortType.SIGNAL, 'execute')]._put(Packet.get_empty())
             )
         self._main_task = self._task_manager.create_task(self._pre_execute())
     
     async def _pre_execute(self):
-        await self._await_signal('execute')
-        await self._update_config()
+        if not self.loop_execution:
+            await self.await_signal('execute')
+        await self.update_config()
         await self._execute()
+        await self.send_message('executed')
         self._main_task = self._task_manager.create_task(self._pre_execute())
     
     @abstractmethod

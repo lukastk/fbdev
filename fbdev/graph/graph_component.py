@@ -22,11 +22,12 @@ from ..exceptions import NodeError, EdgeError
 __all__ = ['GraphComponentFactory']
 
 # %% ../../nbs/api/01_graph/03_graph_component.ipynb 6
-class GraphComponentFactory(BaseComponent):
+class GraphComponentFactory(BaseComponent, inherit_ports=False):
     is_factory = True
     expose_graph = True
-    
     graph: GraphSpec = None
+    
+    port_specs = PortSpecCollection()
     
     def __init__(self):
         super().__init__()
@@ -49,20 +50,6 @@ class GraphComponentFactory(BaseComponent):
     def _handle_edge_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
         try: raise EdgeError() from exception
         except EdgeError as e: self._task_manager.submit_exception(task, e, source_trace)
-    
-    async def put_packet(self, port_id:PortID, packet:BasePacket):
-        await super().put_packet(port_id, packet)
-        # Register that the packet is incoming from outside the net
-        if not self._packet_registry.is_registered(packet) and self._parent_net:
-            packet = TrackedPacket(packet, location=TrackedPacket.EXTERNAL_LOCATION, packet_registry=self._packet_registry)
-            self._packet_registry.register_move(packet, origin=TrackedPacket.EXTERNAL_LOCATION, dest=self._parent_net.loc_uuid, via=port_id)
-    
-    async def get_packet(self, port_id:PortID) -> BasePacket:
-        packet = await super().get_packet(port_id)
-        # Register that the packet is leaving the net
-        if not isinstance(packet, TrackedPacket): raise RuntimeError(f"Got packet '{packet.uuid}' via '{port_id}', that was not of type TrackedPacket.")
-        self._packet_registry.register_move(packet, origin=self._parent_net.loc_uuid, dest=TrackedPacket.EXTERNAL_LOCATION, via=port_id)
-        return packet
     
     @classmethod
     def create_component(cls, graph, expose_graph=True) -> Type[BaseComponent]:

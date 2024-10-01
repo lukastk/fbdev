@@ -12,7 +12,7 @@ import traceback
 
 import fbdev
 from .._utils import AttrContainer, TaskManager, StateCollection, StateHandler, await_multiple_events
-from ..comp.packet import BasePacket
+from ..comp.packet import BasePacket, Packet
 from ..comp.port import PortType, PortSpec, PortSpecCollection, BasePort, Port, PortCollection, PortID
 from ..comp.base_component import BaseComponent
 from .packet_registry import LocationUUID
@@ -148,6 +148,14 @@ class NodePort(BasePort):
     def __init__(self, *, _port:Port, _parent_node: Net):
         self._port = _port
         self._parent_node: Net = _parent_node
+        
+        # This is reversed from the perspective of a component, as NodePorts are something that would be interacted with *outside* of the component execution logic
+        if not self.is_input_port:
+            self.get = self._get_to_external
+            self.get_and_consume = self._get_and_consume_to_external
+        else:
+            self.put = self._put_from_external
+            self.put_value = self._put_value_to_external
     
     @property
     def address(self) -> Address:
@@ -171,10 +179,33 @@ class NodePort(BasePort):
     def data_validator(self) -> Callable[[Any], bool]: return self._port.data_validator
     @property
     def states(self) -> StateCollection: return self._port.states
+    
+    @property
+    def _packet_registry(self) -> PacketRegistry: return self._parent_node._packet_registry
         
     async def _put(self, packet:BasePacket): await self._port._put(packet)
+    async def _get(self) -> TrackedPacket: return await self._port._get()
+        
+    async def _put_from_external(self, packet:BasePacket):
+        # Register that the packet is incoming from outside the net
+        if not self._packet_registry.is_registered(packet):
+            packet = TrackedPacket(packet, location=TrackedPacket.EXTERNAL_LOCATION, packet_registry=self._packet_registry)
+        self._packet_registry.register_move(packet, origin=TrackedPacket.EXTERNAL_LOCATION, dest=self._parent_node.loc_uuid, via=self.id)
+        await self._port._put(packet)
     
-    async def _get(self) -> BasePacket: return await self._port._get()
+    async def _get_to_external(self) -> TrackedPacket:
+        packet = await self._port._get()
+        # Register that the packet is leaving the net
+        if not isinstance(packet, TrackedPacket): raise RuntimeError(f"Got packet '{packet.uuid}' via '{self.id}', that was not of type TrackedPacket.")
+        self._packet_registry.register_move(packet, origin=self._parent_node.loc_uuid, dest=TrackedPacket.EXTERNAL_LOCATION, via=self.id)
+        return packet
+    
+    async def _put_value_to_external(self, val:Any):
+        await self._put_from_external(Packet(val))
+        
+    async def _get_and_consume_to_external(self) -> Any:
+        packet: TrackedPacket = await self._get_to_external()
+        return await packet.consume()
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 13
 class NodePortCollection(PortCollection):

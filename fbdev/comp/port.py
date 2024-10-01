@@ -176,6 +176,11 @@ class PortSpecCollection:
         del self._ports[port_spec.id]
         getattr(self, port_spec.port_type.label)._remove(port_spec.name)
         
+    def clear_all_ports(self):
+        if self._readonly: raise RuntimeError("Cannot remove ports from a readonly PortSpecCollection.")
+        for port_spec in self._ports.values():
+            self.remove_port(port_spec)
+        
     def update(self, parent:PortSpecCollection):
         if self._readonly: raise RuntimeError("Cannot add ports to a readonly PortSpecCollection.")
         for port in parent._ports.values():
@@ -242,6 +247,13 @@ class BasePort(ABC):
     
     @abstractmethod
     async def _get(self) -> BasePacket: ...
+    
+    async def _put_value(self, val:Any):
+        await self._put(Packet(val))
+        
+    async def _get_and_consume(self) -> Any:
+        packet: BasePacket = await self._get()
+        return await packet.consume()
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 16
 class Port(BasePort):
@@ -267,7 +279,7 @@ class Port(BasePort):
         
         self._handshakes = asyncio.Queue()
         
-        if self._is_input_port:
+        if self.is_input_port:
             self.get = self._get
             self.get_and_consume = self._get_and_consume
         else:
@@ -328,13 +340,6 @@ class Port(BasePort):
             if self._is_input_port: self.states._is_blocked.set(False)
         if packet.is_consumed: raise RuntimeError(f"Got already-consumed packet: '{packet.uuid}'.")
         return packet
-    
-    async def _put_value(self, val:Any):
-        await self._put(Packet(val))
-        
-    async def _get_and_consume(self) -> Any:
-        packet: BasePacket = await self._get()
-        return await packet.consume()
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 22
 class PortCollection:

@@ -239,11 +239,13 @@ class NodeSpec:
 class GraphSpec:
     GRAPH_ID = 'GRAPH'
     
-    def __init__(self, port_spec_collection:PortSpecCollection):
+    def __init__(self, port_spec_collection:PortSpecCollection, inherit_base_component_ports=True):
         self._readonly:bool = False
         self._nodes: Dict[str, NodeSpec] = {}
         self._edges: Dict[str, EdgeSpec] = {}
         self._port_specs = port_spec_collection.copy()
+        if inherit_base_component_ports:
+            self._port_specs.update(BaseComponent.port_specs)
         self._edge_connections: Dict[PortID, str] = {} # These are for internal edges. That is, connections between the graph ports and its child edges.
     
     @property
@@ -403,7 +405,7 @@ class GraphSpec:
     def make_readonly(self): self._readonly = True
     
     def copy(self) -> GraphSpec:
-        graph = GraphSpec(self._port_specs)
+        graph = GraphSpec(self._port_specs, inherit_base_component_ports=False)
         for node in self._nodes.values():
             graph.add_node(node.component_type, id=node.id)
         for edge in self._edges.values():

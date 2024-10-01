@@ -62,8 +62,8 @@ class BaseComponent(ABC):
                 raise RuntimeError(f"Component {self.__class__.__name__} is terminated.")
             if self.is_factory:
                 raise RuntimeError(f"Component {self.__class__.__name__} is a component factory.")
-            await self._update_config()
-            await self._send_message('started')
+            await self.update_config()
+            await self.send_message('started')
             await self._post_start()
             self.__started = True
     
@@ -77,13 +77,13 @@ class BaseComponent(ABC):
             await self._pre_terminate()
             await self._task_manager.destroy()
             self.__terminated = True
-            await self._send_message('terminated')
+            await self.send_message('terminated')
         
     async def _pre_terminate(self):
         """Pre-hook for BaseComponent.terminate"""
         pass
         
-    async def _update_config(self):
+    async def update_config(self):
         async def _set_config_task(port):
             packet: BasePacket = await port.get()
             data = await packet.consume()
@@ -97,28 +97,18 @@ class BaseComponent(ABC):
                 tasks.append(asyncio.create_task(_set_config_task(port)))
         await asyncio.gather(*tasks)
     
-    def _set_config(self, name:str, value:Any):
+    def set_config(self, name:str, value:Any):
         if name not in self.port_specs.config.keys():
             raise ValueError(f"Config port {name} is not a valid config port for component {self.__class__.__name__}.")
         self.config._set(name, value)
         
-    async def _await_signal(self, name:str):
+    async def await_signal(self, name:str):
         packet: BasePacket = await self.ports.signal[name].get()
         await packet.consume()
         
-    async def _send_message(self, name:str):
+    async def send_message(self, name:str):
         if self.ports.message[name].states.get_awaiting.get():
             await self.ports.message[name].put(Packet.get_empty())
-    
-    async def put_packet(self, port_id:PortID, packet:BasePacket):
-        if not self.ports[port_id].is_input_port:
-            raise ValueError(f"Port {port_id[1]} is not an input port.")
-        await self.ports[port_id]._put(packet)
-    
-    async def get_packet(self, port_id:PortID) -> BasePacket:
-        if self.ports[port_id].is_input_port:
-            raise ValueError(f"Port {port_id[1]} is not an output port.")
-        return await self.ports[port_id]._get()
     
     @classmethod
     def _create_component_class(cls, component_name=None, class_attrs={}, init_args=[], init_kwargs={}) -> Type[BaseComponent]:

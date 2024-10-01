@@ -23,7 +23,7 @@ class FunctionComponentFactory(ExecComponent):
     _func: Callable = None
         
     @classmethod
-    def get_component(cls, func, component_name=None):
+    def get_component(cls, func, component_name=None, component_options={}):
         if component_name is None: component_name = func.__name__
         
         port_specs = []
@@ -73,7 +73,8 @@ class FunctionComponentFactory(ExecComponent):
             component_name=component_name,
             class_attrs={
                 'port_specs' : PortSpecCollection(*port_specs),
-                '_func' : func
+                '_func' : func,
+                **component_options,
             },
         )
     
@@ -104,7 +105,7 @@ class FunctionComponentFactory(ExecComponent):
                 raise RuntimeError(f"Unsupported output type {type(output)}.")
 
 # %% ../../nbs/api/03_complib/01_func_component_factory.ipynb 8
-def func_component(name=None):
+def func_component(name=None, **component_options):
     def decorator(func):
-        return FunctionComponentFactory.get_component(func, name)
+        return FunctionComponentFactory.get_component(func, name, component_options)
     return decorator
