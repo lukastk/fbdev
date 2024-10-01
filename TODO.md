@@ -14,6 +14,7 @@
 
 - [ ] DAGraphComponentFactory
 - [ ] Way for a component to send a stop signal to the whole graph (in case, for example, a data validator component fails or something).
+- [ ] Consider adding unsent messages to a queue, so that they don't get lost.
 
 ### Major features
 
@@ -29,6 +30,7 @@
 - [ ] Component memory
 - [x] PacketRegistry
 - [ ] Node policies (similar to Kubernetes). Specifies when a node should restart, be destroyed etc. Also where it should be run.
+- [ ] Need a better way to deal with Component options (the ones defined in the class body). Once I do I need to update the `component_options` argument in `FuncComponentFactory.get_component`.
 
 ### Feature ideas
 
