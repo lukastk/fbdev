@@ -14,17 +14,20 @@ from ..net import Address, Node, Net, NodePort, Edge
 # %% auto 0
 __all__ = []
 
-# %% ../../../nbs/api/01_graph/utils/01_node_lookup_by_address.ipynb 5
+# %% ../../../nbs/api/01_graph/utils/01_node_lookup_by_address.ipynb 7
 __delimiters = {
     Node._address_delimiter : Node,
     Edge._address_delimiter : Edge,
     NodePort._address_delimiter : NodePort,
 }
 def _get_next_address_part(address:Address) -> Tuple[str, Address, Type]:
-    delimiter_idx = next((i for i, c in enumerate(address) if c in __delimiters.keys()), -1)
-    if delimiter_idx == -1: return address, '', None
-    id, delimiter, rest_of_address = address[:delimiter_idx], address[delimiter_idx], address[delimiter_idx+1:]
-    return id, rest_of_address, __delimiters[delimiter]
+    _ds = [(address.find(d), d) for d in __delimiters.keys() if address.find(d) != -1]
+    if not _ds:
+        return address, '', None
+    else:
+        d_idx, d = min(_ds, key=lambda x: x[0])
+    id, rest_of_address = address[:d_idx], address[d_idx+len(d):]
+    return id, rest_of_address, __delimiters[d]
 
 def _get_node_child_by_address(node:Node|Net, address:Address) -> Node|Edge|NodePort:
     id, rest_of_address, child_type = _get_next_address_part(address)

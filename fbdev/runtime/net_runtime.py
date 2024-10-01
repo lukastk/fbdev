@@ -32,6 +32,16 @@ class NetRuntime(ABC):
         return cls(net)
     
     @classmethod
+    def from_component(cls, component:Type[BaseComponent]):
+        if not issubclass(component, GraphComponentFactory):
+            graph = GraphSpec()
+            
+        component_type = GraphComponentFactory.create_component(graph)
+        net_spec = NodeSpec(component_type)
+        net = Net(net_spec)
+        return cls(net)
+    
+    @classmethod
     def execute_graph(cls, graph:GraphSpec, *args, config_vals={}, **kwargs):
         with cls.from_graph(graph) as netrun:
             return netrun.execute(*args, config_vals, **kwargs)

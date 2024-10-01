@@ -190,7 +190,7 @@ class NodePortCollection(PortCollection):
 # %% ../../nbs/api/01_graph/02_net.ipynb 15
 class Node:
     NET_ID = 'NET'
-    _address_delimiter = '.'
+    _address_delimiter = '->'
     
     def __init__(self, node_spec: NodeSpec, parent_net:Node|None) -> None:
         self._loc_uuid:LocationUUID = get_location_uuid(self)

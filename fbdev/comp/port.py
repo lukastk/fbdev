@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 
 import fbdev
 from .packet import BasePacket, Packet
-from .._utils import SingletonMeta, AttrContainer, StateHandler, StateCollection, is_valid_python_var_name
+from .._utils import SingletonMeta, AttrContainer, StateHandler, StateCollection, is_valid_name
 
 # %% auto 0
 __all__ = ['PortID', 'PortType', 'PortSpec', 'PortSpecCollection', 'BasePort', 'Port', 'PortCollection']
@@ -58,9 +58,6 @@ class PortSpec:
         
         if dtype is not None and type(dtype) != type:
             raise ValueError("Argument `dtype` must be a type")
-        
-        if not is_valid_python_var_name(self.name):
-            raise ValueError(f"Invalid port name '{self.name}'.")
         
         if port_type == PortType.SIGNAL:
             if dtype is not None: raise RuntimeError(f"Signal port {self.name} cannot have a dtype.")
@@ -138,12 +135,10 @@ class PortSpecCollection:
         self._readonly:bool = False
         self._ports: Dict[PortID, PortSpec] = {}
         for port_type in PortType:
-            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortSpecCollection.__name__}.{port_type.label}", dtype=PortSpec))
+            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortSpecCollection.__name__}.{port_type.label}"))
         for port_spec in port_specs:
-            if port_spec.name is None:
-                raise ValueError("PortSpec.name is None.")
-            if not isinstance(port_spec, PortSpec):
-                raise TypeError(f"PortSpecCollection can only contain PortSpecs. Got '{type(port_spec)}'.")
+            if port_spec.name is None: raise ValueError("PortSpec.name is None.")
+            if not isinstance(port_spec, PortSpec): raise TypeError(f"PortSpecCollection can only contain PortSpecs. Got '{type(port_spec)}'.")
             self.add_port(port_spec)
     
     def __getitem__(self, key:PortID) -> PortSpec:
@@ -160,9 +155,20 @@ class PortSpecCollection:
     
     def add_port(self, port_spec:PortSpec):
         if self._readonly: raise RuntimeError("Cannot add ports to a readonly PortSpecCollection.")
+        if not is_valid_name(port_spec.name): raise ValueError(f"Invalid port name '{port_spec.name}'.")
         if port_spec.id in self._ports: raise ValueError(f"Port name '{port_spec.name}' already exists in {self.__class__.__name__}.")
         self._ports[port_spec.id] = port_spec
-        getattr(self, port_spec.port_type.label)._set(port_spec.name, port_spec)
+        
+        name_parts = port_spec.name.split('.')
+        name_stem = name_parts.pop()
+        attr_container = getattr(self, port_spec.port_type.label)
+        attr_container_addr = f"{PortSpecCollection.__name__}.{port_spec.port_type.label}"
+        for name_part in name_parts:
+            attr_container_addr += f".{name_part}"
+            if not name_part in attr_container:
+                attr_container._set(name_part, AttrContainer({}, obj_name=attr_container_addr))
+            attr_container = attr_container[name_part]
+        attr_container._set(name_stem, port_spec)
     
     def remove_port(self, port_spec:PortSpec):
         if self._readonly: raise RuntimeError("Cannot remove ports from a readonly PortSpecCollection.")
@@ -182,16 +188,19 @@ class PortSpecCollection:
         )
         return port_spec_collection
         
+    def __str__helper(self, attr_container:AttrContainer, lines:List[str], indent:str=''):
+        for key, value in attr_container.items():
+            if isinstance(value, AttrContainer):
+                lines.append(f"{indent}{key}:")
+                self.__str__helper(value, lines, indent + "  ")
+            else: lines.append(f"{indent}{key}")
+        
     def __str__(self) -> str:
         lines = []
         for port_type in PortType:
             if len(getattr(self, port_type.label)) == 0: continue
             lines.append(f"{port_type.label}:")
-            for port_spec in getattr(self, port_type.label).values():
-                line = f"  {str(port_spec.name)}"
-                if port_spec.dtype is not None: line += f":{port_spec.dtype.__name__}"
-                if port_spec.has_default: line += f"={port_spec.default.__repr__()}"
-                lines.append(line)
+            self.__str__helper(getattr(self, port_type.label), lines, "  ")
         return "\n".join(lines)
     
     def __repr__(self):
@@ -256,8 +265,14 @@ class Port(BasePort):
         self._num_waiting_gets = 0
         self._num_waiting_puts = 0
         
-        if self._is_input_port: self.get = self._get
-        else: self.put = self._put
+        self._handshakes = asyncio.Queue()
+        
+        if self._is_input_port:
+            self.get = self._get
+            self.get_and_consume = self._get_and_consume
+        else:
+            self.put = self._put
+            self.put_value = self._put_value
     
     @property
     def spec(self) -> PortSpec: return self._port_spec
@@ -278,46 +293,74 @@ class Port(BasePort):
     @property
     def states(self) -> StateCollection: return self._states
         
+    async def __initiate_handshake(self):
+        handshake_received_event = asyncio.Event()
+        await self._handshakes.put(handshake_received_event)
+        await handshake_received_event.wait()
+        
+    async def __request_handshake(self):
+        handshake_received_event = await self._handshakes.get()
+        handshake_received_event.set()
+        
+        
     async def _put(self, packet:BasePacket):
         if not isinstance(packet, BasePacket): raise ValueError(f"`packet` is not of type `{BasePacket.__name__}`.")
         if packet.is_consumed: raise RuntimeError(f"Tried to put already-consumed packet: '{packet.uuid}'.")
-        
         if not self._is_input_port: self.states._is_blocked.set(True)
         self._num_waiting_puts += 1
         self.states._put_awaiting.set(True)
-        
-        async with self._gets_are_waiting_cond:
-            await self._gets_are_waiting_cond.wait_for(lambda: self._num_waiting_gets > 0)
-            await self._packet_queue.put(packet)
-            self._num_waiting_puts -= 1
-            if self._num_waiting_puts == 0:
-                self.states._put_awaiting.set(False)
-                if not self._is_input_port: self.states._is_blocked.set(False)
+        await self.__initiate_handshake()
+        await self._packet_queue.put(packet)
+        self._num_waiting_puts -= 1
+        if self._num_waiting_puts == 0:
+            self.states._put_awaiting.set(False)
+            if not self._is_input_port: self.states._is_blocked.set(False)
     
     async def _get(self) -> BasePacket:
         if self._is_input_port: self.states._is_blocked.set(True)
         self.states._get_awaiting.set(True)
         self._num_waiting_gets += 1
-        async with self._gets_are_waiting_cond: self._gets_are_waiting_cond.notify()
+        await self.__request_handshake()
         packet = await self._packet_queue.get()
         self._num_waiting_gets -= 1
-        async with self._gets_are_waiting_cond: self._gets_are_waiting_cond.notify()
         if self._num_waiting_gets == 0:
             self.states._get_awaiting.set(False)
             if self._is_input_port: self.states._is_blocked.set(False)
         if packet.is_consumed: raise RuntimeError(f"Got already-consumed packet: '{packet.uuid}'.")
         return packet
+    
+    async def _put_value(self, val:Any):
+        await self._put(Packet(val))
+        
+    async def _get_and_consume(self) -> Any:
+        packet: BasePacket = await self._get()
+        return await packet.consume()
 
-# %% ../../nbs/api/00_comp/01_port.ipynb 21
+# %% ../../nbs/api/00_comp/01_port.ipynb 22
 class PortCollection:
     def __init__(self, port_spec_collection:PortSpecCollection):
         self._port_spec_collection: PortSpecCollection = port_spec_collection
         self._ports: Dict[str, Port] = {}
         for port_type in PortType:
-            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortCollection.__name__}.{port_type.label}", dtype=BasePort))
+            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortCollection.__name__}.{port_type.label}"))
         for port_spec in port_spec_collection.iter_ports():
-            self._ports[port_spec.id] = port = Port(port_spec)
-            getattr(self, port_spec.port_type.label)._set(port_spec.name, port)
+            self.__add_port(Port(port_spec))
+    
+    def __add_port(self, port:Port):
+        if not is_valid_name(port.name): raise ValueError(f"Invalid port name '{port.name}'.")
+        if port.id in self._ports: raise ValueError(f"Port name '{port.name}' already exists in {self.__class__.__name__}.")
+        self._ports[port.id] = port
+        
+        name_parts = port.name.split('.')
+        name_stem = name_parts.pop()
+        attr_container = getattr(self, port.port_type.label)
+        attr_container_addr = f"{PortSpecCollection.__name__}.{port.port_type.label}"
+        for name_part in name_parts:
+            attr_container_addr += f".{name_part}"
+            if not name_part in attr_container:
+                attr_container._set(name_part, AttrContainer({}, obj_name=attr_container_addr))
+            attr_container = attr_container[name_part]
+        attr_container._set(name_stem, port)
     
     def __getitem__(self, key:PortID) -> Port:
         if key in self._ports: return self._ports[key]

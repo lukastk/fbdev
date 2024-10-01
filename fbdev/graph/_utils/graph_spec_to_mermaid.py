@@ -5,6 +5,7 @@
 # %% ../../../nbs/api/01_graph/utils/00_graph_spec_to_mermaid.ipynb 4
 from __future__ import annotations
 from IPython.display import Markdown
+from typing import List
 
 import fbdev
 from ...comp.port import PortType, PortSpec, PortSpecCollection
@@ -46,7 +47,8 @@ def __graph_to_mermaid_subgraph_structs(address_prefix:str,
                                         graph:GraphSpec,
                                         mm_edges,
                                         mm_class_assignments,
-                                        hide_unconnected_ports):
+                                        hide_unconnected_ports:bool,
+                                        hide_port_types:List[PortType]):
     def get_mermaid_struct():
         return {
             'mm_address' : None,
@@ -73,6 +75,7 @@ def __graph_to_mermaid_subgraph_structs(address_prefix:str,
         # Ports
         for port in node_spec.ports.iter_ports():
             if hide_unconnected_ports and not __is_port_connected(port): continue
+            if not __is_port_connected(port) and port.port_type in hide_port_types: continue
             port_address = __get_port_address(address_prefix, port)
             __add_to_mm_class(port.port_type.label, port_address, mm_class_assignments)
             mm_node_spec['mm_nodes'].append(port_address)
@@ -89,8 +92,8 @@ def __graph_to_mermaid_subgraph_structs(address_prefix:str,
             __add_to_mm_class('subgraph_zone', mm_node_spec_children_container['mm_address'], mm_class_assignments)
             mm_node_spec_children_container['mm_label'] = " "
             mm_node_spec_children_container['mm_subgraphs'] = __graph_to_mermaid_subgraph_structs(
-                f"{mm_node_spec['mm_address']}.", node_spec.subgraph, mm_edges, mm_class_assignments,
-                hide_unconnected_ports
+                f"{mm_node_spec['mm_address']}->", node_spec.subgraph, mm_edges, mm_class_assignments,
+                hide_unconnected_ports, hide_port_types
             )
             mm_node_spec['mm_subgraphs'].append(mm_node_spec_children_container)
             
@@ -105,13 +108,15 @@ def __graph_to_mermaid_subgraph_structs(address_prefix:str,
     return mm_subgraphs
 
 # %% ../../../nbs/api/01_graph/utils/00_graph_spec_to_mermaid.ipynb 10
-__invalid_mm_character_conversions = {
-    '.' : '__D__',
+__invalid_mm_substrings = {
+    '->' : '__D__',
     ':' : '__C__',
 }
 
 def __fmt(txt):
-    return ''.join([__invalid_mm_character_conversions[c] if c in __invalid_mm_character_conversions else c for c in txt])
+    for s in __invalid_mm_substrings:
+        txt = txt.replace(s, __invalid_mm_substrings[s])
+    return txt
 
 def __convert_mm_structs_to_mermaid(merm_lines, mm_subgraph_structs, tab_level):
     def add_line(add_tabs, l="", format=True):
@@ -135,7 +140,8 @@ __mermaid_class_defs = {
 # %% ../../../nbs/api/01_graph/utils/00_graph_spec_to_mermaid.ipynb 13
 def graph_to_mermaid(graph:GraphSpec,
                      orientation='',
-                     hide_unconnected_ports=False) -> str:
+                     hide_unconnected_ports=False,
+                     hide_port_types:List[PortType]=[]) -> str:
     """
     TB - Top to bottom
     TD - Top-down/ same as top to bottom
@@ -147,7 +153,7 @@ def graph_to_mermaid(graph:GraphSpec,
     mm_edges = set()
     
     mm_subgraph_structs = __graph_to_mermaid_subgraph_structs("", graph, mm_edges, mm_class_assignments,
-                                                              hide_unconnected_ports)
+                                                              hide_unconnected_ports, hide_port_types)
     merm_lines = [f'flowchart {orientation}']
     __convert_mm_structs_to_mermaid(merm_lines, mm_subgraph_structs, 1)
     
@@ -160,8 +166,8 @@ def graph_to_mermaid(graph:GraphSpec,
     # Add edges
     for mm_edge in mm_edges:
         tail_address, arrow, head_address = mm_edge
-        tail_address = __fmt(tail_address.replace(f".{GraphSpec.GRAPH_ID}", '')) # A hack...
-        head_address = __fmt(head_address.replace(f".{GraphSpec.GRAPH_ID}", ''))
+        tail_address = __fmt(tail_address.replace(f"->{GraphSpec.GRAPH_ID}", '')) # A hack...
+        head_address = __fmt(head_address.replace(f"->{GraphSpec.GRAPH_ID}", ''))
         merm_lines.append(f"    {tail_address} {arrow} {head_address}")
         
     # Add class definitions

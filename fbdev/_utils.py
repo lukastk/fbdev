@@ -21,34 +21,19 @@ from abc import ABC, abstractmethod
 import fbdev
 
 # %% auto 0
-__all__ = ['is_valid_python_var_name', 'is_mutually_exclusive', 'is_in_event_loop', 'await_multiple_events', 'await_any_event',
+__all__ = ['is_valid_name', 'is_mutually_exclusive', 'is_in_event_loop', 'await_multiple_events', 'await_any_event',
            'AttrContainer', 'ReadonlyEvent', 'EventHandler', 'EventCollection', 'StateHandler', 'StateView',
            'StateCollection', 'TaskManager', 'get_git_root_directory', 'root_dir', 'extract_top_level_docstring',
            'get_function_from_py_file', 'SingletonMeta']
 
 # %% ../nbs/api/utils.ipynb 5
-def is_valid_python_var_name(name: str) -> bool:
-    """
-    Check if the provided string is a valid Python variable name.
-    
-    Parameters:
-    name (str): The string to check.
-    
-    Returns:
-    bool: True if the string is a valid Python variable name, False otherwise.
-    """
-    # Check if the name is a Python keyword
-    if keyword.iskeyword(name):
-        return False
-    
-    # Regular expression to match valid Python identifiers
-    valid_identifier_pattern = r'^[A-Za-z_][A-Za-z0-9_]*$'
-    
-    # Use the regular expression to check the validity of the variable name
-    if re.match(valid_identifier_pattern, name):
-        return True
-    else:
-        return False
+def is_valid_name(name: str) -> bool:
+    for name_part in name.split('.'):
+        if keyword.iskeyword(name_part):
+            return False
+        valid_identifier_pattern = r'^[A-Za-z_][A-Za-z0-9_]*$'
+        if not re.match(valid_identifier_pattern, name_part): return False
+    return True
 
 # %% ../nbs/api/utils.ipynb 8
 def is_mutually_exclusive(*args, at_least_one:bool=False):
@@ -105,7 +90,7 @@ class AttrContainer:
         if key.startswith("__") and key.endswith("__"):
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}' (in {self._obj_name})")
         return self[key]
-        
+    
     def __getitem__(self, key):
         if key in self._attrs:
             return self._attrs[key]

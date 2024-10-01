@@ -5,12 +5,12 @@
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 4
 from __future__ import annotations
 from types import MappingProxyType
-from typing import Type, Optional, Union, Dict
+from typing import Type, Optional, Union, Dict, List
 from fastcore.basics import patch_to
 from IPython.display import Markdown
 
 import fbdev
-from .._utils import is_valid_python_var_name
+from .._utils import is_valid_name
 from ..comp.port import PortType, PortSpec, PortSpecCollection, PortID
 from ..comp.base_component import BaseComponent
 
@@ -160,6 +160,8 @@ class NodePortSpec(PortSpec):
         if not self._connects_to_head: raise ValueError(f"Wrong direction of connection for output port.")
         self.connect_to(other)
         return other
+    
+    
 
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 10
 class NodeSpec:
@@ -247,18 +249,19 @@ class GraphSpec:
     @property
     def ports(self) -> PortSpecCollection:
         _ports = [NodePortSpec(_port_spec=port_spec, _parent_node=self) for port_spec in self._port_specs.iter_ports()]
-        _port_spec_collections = PortSpecCollection(*_ports)
-        _port_spec_collections.make_readonly()
-        return _port_spec_collections
+        _port_spec_collection = PortSpecCollection(*_ports)
+        _port_spec_collection.make_readonly()
+        return _port_spec_collection
     
     @property
     def nodes(self) -> MappingProxyType[str, NodeSpec]: return MappingProxyType(self._nodes)
     @property
     def edges(self) -> MappingProxyType[str, EdgeSpec]: return MappingProxyType(self._edges)
     
-    def add_graph_port(self, port_spec:PortSpec):
+    def add_graph_port(self, port_spec:PortSpec) -> NodePortSpec:
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         self._port_specs.add_port(port_spec)
+        return self.ports[port_spec.id]
         
     def remove_graph_port(self, port_spec:PortSpec):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
@@ -268,9 +271,17 @@ class GraphSpec:
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         self._port_specs.update(port_spec_collection)
     
-    def add_all_unconnected_child_ports(self):
+    def add_and_connect_unconnected_child_ports(self,
+                                                exclude_port_types:List[PortType]=[PortType.MESSAGE, PortType.SIGNAL],
+                                                prefix_with_node_id:bool=True):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
-        
+        for node in self.nodes.values():
+            unconnected_ports = [port_id for port_id in node.ports if (port_id not in node.edge_connections) and (port_id[0] not in exclude_port_types)]
+            for port_id in unconnected_ports:
+                port_type, port_name = port_id
+                port_name = f"{node.id}.{port_name}" if prefix_with_node_id else port_name
+                graph_port = self.add_graph_port(PortSpec(port_type, port_name))
+                graph_port.connect_to(node.ports[port_id])
     
     def get_node_by_id(self, node_id:str) -> NodeSpec:
         if node_id == GraphSpec.GRAPH_ID: return self
@@ -284,7 +295,7 @@ class GraphSpec:
         if id in self._nodes: raise ValueError(f"Node with id {id} already exists")
         if type(id) != str: raise TypeError(f"Node id must be a string, got {type(id)}")
         if id == GraphSpec.GRAPH_ID: raise ValueError(f"Node id '{id}' is reserved for the graph itself.")
-        if not is_valid_python_var_name(id): raise ValueError(f"'{id}' is not a valid Node id.")
+        if not is_valid_name(id): raise ValueError(f"'{id}' is not a valid Node id.")
         node = NodeSpec(component_type=component_type, parent_graph=self, id=id)
         self._nodes[str(id)] = node
         return node
@@ -295,7 +306,7 @@ class GraphSpec:
             id = f'edge{str(len(self._edges))}'
         if id in self._edges: raise ValueError(f"Node with id {id} already exists")
         if type(id) != str: raise TypeError(f"Node id must be a string, got {type(id)}")
-        if not is_valid_python_var_name(id): raise ValueError(f"'{id}' is not a valid Edge id.")
+        if not is_valid_name(id): raise ValueError(f"'{id}' is not a valid Edge id.")
         edge = EdgeSpec(_id=id, _maxsize=maxsize, _parent_graph=self)
         self._edges[str(id)] = edge
         return edge
@@ -305,7 +316,6 @@ class GraphSpec:
         node = self.__get_node(port_spec._parent_node)
         edge = self.__get_edge(edge)
         
-        # Explanation of the below:
         # Input ports of the graph always connect directly to input ports of its child nodes
         # and vice versa for output ports.
         if isinstance(node, GraphSpec): is_tail_connection = port_spec.is_input_port
@@ -411,13 +421,15 @@ class GraphSpec:
 @patch_to(GraphSpec)
 def to_mermaid(self,
                orientation:str='',
-               hide_unconnected_ports:bool=False) -> str:
+               hide_unconnected_ports:bool=False,
+               hide_port_types:List[PortType]=[]) -> str:
     from fbdev.graph._utils.graph_spec_to_mermaid import graph_to_mermaid
-    return graph_to_mermaid(self, orientation, hide_unconnected_ports)
+    return graph_to_mermaid(self, orientation, hide_unconnected_ports, hide_port_types)
 
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 16
 @patch_to(GraphSpec)
 def display_mermaid(self,
                     orientation:str='',
-                    hide_unconnected_ports:bool=False) -> str:
-    return Markdown(f"```mermaid\n{self.to_mermaid(orientation, hide_unconnected_ports)}\n```")
+                    hide_unconnected_ports:bool=False,
+                    hide_port_types:List[PortType]=[]) -> str:
+    return Markdown(f"```mermaid\n{self.to_mermaid(orientation, hide_unconnected_ports, hide_port_types)}\n```")
