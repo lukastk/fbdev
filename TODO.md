@@ -55,6 +55,16 @@
 - [x] Make `export_tests.py` also run `nbdev_clean` on `test_nbs`.
 - [x] Add `from __future__ import annotations` to all submodules, and replace string annotations.
 
+- [ ] The below code in the constructor of `Port` should be in a separate `ComponentPort` instead. And `is_blocked` should not be a property of Ports but of `ComponentPort`.
+```python
+        if self._is_input_port:
+            self.get = self._get
+            self.get_and_consume = self._get_and_consume
+        else:
+            self.put = self._put
+            self.put_value = self._put_value
+```
+
 ### Major refactors
 
 - [ ] Take out the flow runtime out of `fbdev` (call it `fbruntime` or `fbcore`). `fbdev` will be the 'development' part of the fbX universe (similar to `nbdev` vs `fastcore`).
