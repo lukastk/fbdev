@@ -78,4 +78,4 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
         for node in self._nodes.values():
             await node.terminate()
         for edge in self.edges.values():
-            await edge.terminate()
+            await edge.stop()

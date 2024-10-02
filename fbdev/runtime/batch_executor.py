@@ -50,19 +50,25 @@ class BatchExecutor(BaseNetRuntime):
             
         return main(), output_vals
 
-    def execute(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
+    def start(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
         """Note: this method cannot be run from within an event loop."""
+        super().start()
         exec_coro, output = self._setup_execution_coro(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
         asyncio.run(exec_coro)
+        self._started = True
         return output
     
-    async def aexecute(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
+    async def astart(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
+        await super().astart()
         exec_coro, output = self._setup_execution_coro(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
         await exec_coro
+        self._started = True
         return output
     
     async def stop(self):
+        await super().stop()
         if self._net is not None:
             if not self._net.states.terminated.get():
                 await self._net.terminate()
             self._net = None
+        self._stopped = True

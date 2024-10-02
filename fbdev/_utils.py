@@ -311,11 +311,12 @@ class TaskManager:
                 for task in done:
                     try:
                         exception = task.exception()
-                    except asyncio.CancelledError as e:
+                    except asyncio.CancelledError as e: # Because CancelledError is not a subclass of Exception, but BaseException
                         exception = e
                     if exception is not None:
                         async with self._exceptions_non_empty_condition:
-                            self.submit_exception(task, exception, ())
+                            if not self.is_cancelled(task):
+                                self.submit_exception(task, exception, ())
                     self._tasks.remove(task)
         except asyncio.CancelledError: # This registers the task cancel exception as handled.
             pass
@@ -443,6 +444,9 @@ def get_module_path_hierarchy(path):
     return hierarchy
 
 # %% ../nbs/api/utils.ipynb 51
+import types
+
+# %% ../nbs/api/utils.ipynb 52
 def get_function_from_py_file(file_path, func_name=None, args=[], is_async=False):
     file_path = Path(file_path)
     module_path = find_module_root(file_path)
@@ -481,9 +485,31 @@ def get_function_from_py_file(file_path, func_name=None, args=[], is_async=False
     exec(func_code, locals_dict)
     if is_in_module: sys.path.pop(0)
     
-    return locals_dict[func_name]
+    func = locals_dict[func_name]
+    # Create a new code object with the correct filename and line number. This will allow for proper displaying of the line number and code during exceptions.
+    new_code = types.CodeType(
+        func.__code__.co_argcount,
+        func.__code__.co_posonlyargcount,
+        func.__code__.co_kwonlyargcount,
+        func.__code__.co_nlocals,
+        func.__code__.co_stacksize,
+        func.__code__.co_flags,
+        func.__code__.co_code,
+        func.__code__.co_consts,
+        func.__code__.co_names,
+        func.__code__.co_varnames,
+        file_path.as_posix(),
+        func.__code__.co_name,
+        -1, # Line number offset. Not entirely sure why it's -1, but it works.
+        func.__code__.co_lnotab,
+        func.__code__.co_freevars,
+        func.__code__.co_cellvars
+    )
+    func.__code__ = new_code
+    
+    return func
 
-# %% ../nbs/api/utils.ipynb 53
+# %% ../nbs/api/utils.ipynb 54
 class SingletonMeta(type):
     _instances = {}
 

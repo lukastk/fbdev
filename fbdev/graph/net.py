@@ -104,37 +104,32 @@ class Edge():
         packet = None
         if self.tail is None: return # TODO: Allow for attaching the tail and head after creation
         while True:
-            try:
-                packet_putted = self.tail_port.states.put_awaiting.get_state_event(True)
-                edge_non_full = self.states.full.get_state_event(False)
-                await await_multiple_events(packet_putted, edge_non_full)
-                packet = await self.tail_port._get()
-            finally:
-                if packet is not None:
-                    if not self._packet_registry.is_registered(packet):
-                        packet = TrackedPacket(packet, self.tail.loc_uuid, self._packet_registry)
-                    self._packet_registry.register_move(packet, origin=self.tail.loc_uuid, dest=self.loc_uuid, via=self.tail_port.id)
-                    await self._packets.put(packet)
-                    packet = None
-                    self.states._empty.set(False)
-                    if self._packets.full(): self.states._empty.set(True)
+            packet_putted = self.tail_port.states.put_awaiting.get_state_event(True)
+            edge_non_full = self.states.full.get_state_event(False)
+            await await_multiple_events(packet_putted, edge_non_full)
+            packet = await self.tail_port._get()
+            if not self._packet_registry.is_registered(packet):
+                packet = TrackedPacket(packet, self.tail.loc_uuid, self._packet_registry)
+            self._packet_registry.register_move(packet, origin=self.tail.loc_uuid, dest=self.loc_uuid, via=self.tail_port.id)
+            await self._packets.put(packet)
+            packet = None
+            self.states._empty.set(False)
+            if self._packets.full(): self.states._empty.set(True)
 
     async def _edge_out_bus(self):
         packet = None
         if self.head is None: return
         while True:
-            try:
-                packet_getted = self.head_port.states.get_awaiting.get_state_event(True)
-                edge_non_empty = self.states.empty.get_state_event(False)
-                await await_multiple_events(packet_getted, edge_non_empty)
-                packet = await self._packets.get()
-            finally:
-                if packet is not None:
-                    await self.head_port._put(packet)
-                    self._packet_registry.register_move(packet, origin=self.loc_uuid, dest=self.head.loc_uuid, via=self.head_port.id) # I think this safely registers the move, as `await port._packet_queue.put(packet)` is the last await in `_put`
-                    packet = None
-                    self.states._full.set(False)
-                    if self._packets.empty(): self.states._empty.set(True)
+            packet_getted = self.head_port.states.get_awaiting.get_state_event(True)
+            edge_non_empty = self.states.empty.get_state_event(False)
+            await await_multiple_events(packet_getted, edge_non_empty)
+            packet = await self._packets.get()
+            if packet is not None:
+                await self.head_port._put(packet)
+                self._packet_registry.register_move(packet, origin=self.loc_uuid, dest=self.head.loc_uuid, via=self.head_port.id) # I think this safely registers the move, as `await port._packet_queue.put(packet)` is the last await in `_put`
+                packet = None
+                self.states._full.set(False)
+                if self._packets.empty(): self.states._empty.set(True)
 
     @property
     def address(self) -> Address:
@@ -288,6 +283,9 @@ class Node:
         async with self.__terminate_lock:
             if not self.states.started.get(): raise RuntimeError("Node has not been started yet.")
             if self.states.terminated.get(): raise RuntimeError("Node is already terminated.")
+            await self._task_manager.destroy()
+            await self.component_process.terminate()
+            self.states._terminated.set(True)
     
     @property
     def address(self) -> Address:
@@ -322,6 +320,13 @@ class Net(Node):
     @property
     def edges(self) -> MappingProxyType[str, Edge]: return self.component_process.edges
     
+    async def await_message(self, name:str):
+        packet: BasePacket = await self.ports.message[name].get()
+        await packet.consume()
+        
+    async def send_signal(self, name:str):
+        await self.ports.signal[name].put(Packet.get_empty())
+    
     def get_node_by_id(self, node_id:str) -> Node|Net:
         if node_id == Net.NET_ID: return self
         else: return self.nodes[node_id]
@@ -331,8 +336,11 @@ class Net(Node):
         any exceptions that occurs in the task manager. Therefore, for it to work
         as expected, the coroutine must be starting tasks using self._task_manager.create_task().
         """
+        results = []
         async def all_coros():
-            await asyncio.gather(*[asyncio.create_task(coro) for coro in coros])
+            _tasks = [asyncio.create_task(coro) for coro in coros]
+            await asyncio.gather(*_tasks)
+            for task in _tasks: results.append(task.result())
         task = asyncio.create_task(all_coros())
         monitor_task = asyncio.create_task(self._task_manager.wait_for_exceptions())
         await asyncio.wait([task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
@@ -352,3 +360,6 @@ class Net(Node):
                 
         for task, e, source_trace in exceptions:
             raise e
+        
+        if len(results) == 1: return results[0]
+        else: return results

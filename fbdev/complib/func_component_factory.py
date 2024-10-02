@@ -63,7 +63,7 @@ class FunctionComponentFactory(ExecComponent):
             ]
         elif signature.return_annotation == inspect.Parameter.empty:
             port_specs.append(PortSpec(PortType.OUTPUT, 'out'))
-        elif signature.return_annotation == None:
+        elif signature.return_annotation is None:
             pass # No output ports
         else:
             dtype = signature.return_annotation if signature.return_annotation != Any else None

@@ -17,6 +17,7 @@ import sys
 import fbdev
 from ._utils import get_function_from_py_file
 from .comp import BaseComponent
+from .comp.packet import Packet
 from .complib import ExecComponent
 from .runtime import BatchExecutor
 
@@ -44,20 +45,22 @@ def method_from_py_file(file_path:str):
     return decorator
 
 # %% ../nbs/api/dev_utils.ipynb 11
-def get_nb_testing_comp_process(component_type: Type[BaseComponent], configs={}, **inputs) -> BaseComponent:
+def get_nb_testing_comp_process(component_type: Type[BaseComponent], configs={}, signals=set(), **inputs) -> BaseComponent:
     comp_process = component_type()
     
     async def packet_putter(port_id, val):
-        while True:
-            await comp_process.ports[port_id]._put_value(val)
+        while True: await comp_process.ports[port_id]._put_value(val)
+    async def empty_packet_putter(port_id):
+        while True: await comp_process.ports[port_id]._put(Packet.get_empty())
         
     async def packet_getter(port_id):
-        while True:
-            await comp_process.ports[port_id]._get()
+        while True: await comp_process.ports[port_id]._get()
         
     coros = [packet_putter(comp_process.ports.input[port_name].id, val) for port_name,val in inputs.items()]
+    coros += [packet_putter(comp_process.ports.signal[port_name].id, Packet.get_empty()) for port_name in signals]
     coros += [packet_putter(comp_process.ports.config[port_name].id, val) for port_name,val in configs.items()]
     coros += [packet_getter(comp_process.ports.output[port_name].id) for port_name in comp_process.ports.output.keys()]
+    coros += [packet_getter(comp_process.ports.message[port_name].id) for port_name in comp_process.ports.message.keys()]
     tasks = [asyncio.create_task(coro) for coro in coros]
     
     async def exception_catcher(tasks):

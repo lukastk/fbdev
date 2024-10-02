@@ -24,20 +24,28 @@ __all__ = ['BaseNetRuntime']
 
 # %% ../../nbs/api/02_runtime/00_base_net_runtime.ipynb 6
 class BaseNetRuntime(ABC):
+    def __init__(self):
+        self._started = False
+        self._stopped = False
+    
+    @property
+    def started(self) -> bool: return self._started
+    @property
+    def stopped(self) -> bool: return self._stopped
+    
     @classmethod
-    def from_graph(cls, graph:GraphSpec):
+    def from_graph(cls, graph:GraphSpec, *args, **kwargs):
         component_type = GraphComponentFactory.create_component(graph)
         net_spec = NodeSpec(component_type)
         net = Net(net_spec)
-        return cls(net)
+        return cls(net, *args, **kwargs)
     
     @classmethod
-    def from_component(cls, component:Type[BaseComponent], prefix_ports_with_node_id=False):
+    def from_component(cls, component:Type[BaseComponent], prefix_ports_with_node_id=False, *args, **kwargs):
         graph = GraphSpec(PortSpecCollection(), inherit_base_component_ports=False)
         graph.add_node(component)
-        print(graph.ports)
         graph.add_and_connect_unconnected_child_ports(prefix_with_node_id=prefix_ports_with_node_id, exclude_port_types=[])
-        return cls.from_graph(graph)
+        return cls.from_graph(graph, *args, **kwargs)
     
     @classmethod
     def execute_graph(cls, graph:GraphSpec, *args, config_vals={}, **kwargs):
@@ -50,19 +58,26 @@ class BaseNetRuntime(ABC):
             return await netrun.aexecute(*args, config=config_vals, **kwargs)
     
     @abstractmethod
-    def execute(self, *args, config={}, **kwargs): ...
+    def start(self):
+        if self._started: raise RuntimeError("{self.__class__.__name__} has already been started.")
+        if self._stopped: raise RuntimeError("{self.__class__.__name__} has been stopped.")
     
     @abstractmethod
-    async def aexecute(self, *args, config_vals={}, **kwargs): ...
+    async def astart(self):
+        if self._started: raise RuntimeError("{self.__class__.__name__} has already been started.")
+        if self._stopped: raise RuntimeError("{self.__class__.__name__} has been stopped.")
     
     @abstractmethod
-    async def stop(self): ...
+    async def stop(self):
+        if not self._started: raise RuntimeError(f"{self.__class__.__name__} has not yet been started.")
+        if self._stopped: raise RuntimeError("{self.__class__.__name__} has already been stopped.")
     
     async def __aenter__(self):
         return self
 
     async def __aexit__(self, exc_type, exc_value, traceback):
-        await self.stop()
+        if not self.stopped:
+            await self.stop()
         
     def __enter__(self):
         return self

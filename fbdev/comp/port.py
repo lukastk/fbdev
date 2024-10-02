@@ -373,12 +373,7 @@ class PortCollection:
     
     def __iter__(self): return self._ports.__iter__()
     def __len__(self): return self._ports.__len__()
-    def __contains__(self, key):
-        if type(key) == tuple:
-            if type(key[0]) != PortType or type(key[1]) != str or len(key) != 2:
-                raise TypeError(f"Key must be a tuple of (PortType, str). Got '{key}'.")
-            key = f"{key[0]}.{key[1]}"
-        return key in self._ports
+    def __contains__(self, key): return key in self._ports
     def as_dict(self) -> Dict[str, Port]: return MappingProxyType(self._ports)
     
     def iter_ports(self) -> Iterator[Port]: return self._ports.values().__iter__()

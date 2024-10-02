@@ -106,9 +106,9 @@ class BaseComponent(ABC):
         packet: BasePacket = await self.ports.signal[name].get()
         await packet.consume()
         
-    async def send_message(self, name:str):
-        if self.ports.message[name].states.get_awaiting.get():
-            await self.ports.message[name].put(Packet.get_empty())
+    async def send_message(self, name:str, wait_until_sent=False):
+        if wait_until_sent: await self.ports.message[name].put(Packet.get_empty())
+        else: self._task_manager.create_task(self.ports.message[name].put(Packet.get_empty()))
     
     @classmethod
     def _create_component_class(cls, component_name=None, class_attrs={}, init_args=[], init_kwargs={}) -> Type[BaseComponent]:
