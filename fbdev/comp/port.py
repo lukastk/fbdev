@@ -46,9 +46,9 @@ PortID = NewType('PortID', Tuple[PortType, str])
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 9
 class PortSpec:
-    _NO_DEFAULT = SingletonMeta('NO_DEFAULT')
+    _NO_DEFAULT = type(None)
     
-    def __init__(self, port_type, name=None, dtype=None, data_validator=None, is_optional=False, default=_NO_DEFAULT()):
+    def __init__(self, port_type, name=None, dtype=None, data_validator=None, is_optional=False, default=_NO_DEFAULT):
         self._name:str = name
         self._port_type:PortType = port_type
         self._dtype:type = dtype
@@ -66,7 +66,7 @@ class PortSpec:
         if port_type != PortType.CONFIG:
             if is_optional:
                 raise RuntimeError(f"Only ports of type {PortType.CONFIG} can be optional.")
-            if type(default) != PortSpec._NO_DEFAULT:
+            if self.has_default:
                 raise RuntimeError(f"Only ports of type {PortType.CONFIG} can have a default value.")
         
         if self.is_optional and self.has_default:
@@ -101,7 +101,7 @@ class PortSpec:
         if not self.has_default: raise RuntimeError(f"Config port {self.name} does not have a default value.")
         return self._default
     @property
-    def has_default(self) -> bool: return type(self._default) != PortSpec._NO_DEFAULT
+    def has_default(self) -> bool: return self._default != PortSpec._NO_DEFAULT
     
     def __str__(self) -> str:
         return f"{self.port_type.label}.{self.name}"
@@ -273,7 +273,6 @@ class Port(BasePort):
         self._states._add_state(StateHandler("get_awaiting", False))
         
         self._packet_queue = asyncio.Queue(maxsize=1)
-        self._gets_are_waiting_cond = asyncio.Condition()
         self._num_waiting_gets = 0
         self._num_waiting_puts = 0
         
@@ -314,11 +313,10 @@ class Port(BasePort):
         handshake_received_event = await self._handshakes.get()
         handshake_received_event.set()
         
-        
     async def _put(self, packet:BasePacket):
         if not isinstance(packet, BasePacket): raise ValueError(f"`packet` is not of type `{BasePacket.__name__}`.")
         if packet.is_consumed: raise RuntimeError(f"Tried to put already-consumed packet: '{packet.uuid}'.")
-        if not self._is_input_port: self.states._is_blocked.set(True)
+        if self.is_output_port: self.states._is_blocked.set(True)
         self._num_waiting_puts += 1
         self.states._put_awaiting.set(True)
         await self.__initiate_handshake()
@@ -326,10 +324,10 @@ class Port(BasePort):
         self._num_waiting_puts -= 1
         if self._num_waiting_puts == 0:
             self.states._put_awaiting.set(False)
-            if not self._is_input_port: self.states._is_blocked.set(False)
+            if self.is_output_port: self.states._is_blocked.set(False)
     
     async def _get(self) -> BasePacket:
-        if self._is_input_port: self.states._is_blocked.set(True)
+        if self.is_input_port: self.states._is_blocked.set(True)
         self.states._get_awaiting.set(True)
         self._num_waiting_gets += 1
         await self.__request_handshake()
@@ -337,11 +335,11 @@ class Port(BasePort):
         self._num_waiting_gets -= 1
         if self._num_waiting_gets == 0:
             self.states._get_awaiting.set(False)
-            if self._is_input_port: self.states._is_blocked.set(False)
+            if self.is_input_port: self.states._is_blocked.set(False)
         if packet.is_consumed: raise RuntimeError(f"Got already-consumed packet: '{packet.uuid}'.")
         return packet
 
-# %% ../../nbs/api/00_comp/01_port.ipynb 22
+# %% ../../nbs/api/00_comp/01_port.ipynb 24
 class PortCollection:
     def __init__(self, port_spec_collection:PortSpecCollection):
         self._port_spec_collection: PortSpecCollection = port_spec_collection

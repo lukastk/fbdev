@@ -180,7 +180,7 @@ class NodePort(BasePort):
         
     async def _put(self, packet:BasePacket): await self._port._put(packet)
     async def _get(self) -> TrackedPacket: return await self._port._get()
-        
+    
     async def _put_from_external(self, packet:BasePacket):
         # Register that the packet is incoming from outside the net
         if not self._packet_registry.is_registered(packet):

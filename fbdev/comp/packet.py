@@ -21,10 +21,8 @@ PacketUUID = NewType('PacketUUID', int)
 
 # %% ../../nbs/api/00_comp/00_packet.ipynb 7
 class BasePacket(ABC):
-    _EmptyPayload = SingletonMeta('EmptyPayload')
-    
     @property
-    def is_empty(self): return self._dtype == BasePacket._EmptyPayload
+    def is_empty(self): return self._dtype == 'EmptyPayload'
     
     @property
     @abstractmethod
@@ -63,8 +61,6 @@ class Packet(BasePacket):
     @property
     def creation_timestamp(self) -> datetime: return self._creation_timestamp
     @property
-    def is_empty(self) -> bool: return self._dtype == Packet._EmptyPayload
-    @property
     def dtype(self) -> Type: return self._dtype
     @property
     def is_consumed(self) -> bool: return self._is_consumed
@@ -80,4 +76,6 @@ class Packet(BasePacket):
     
     @classmethod
     def get_empty(cls) -> Packet:
-        return cls(BasePacket._EmptyPayload())
+        packet = cls(None)
+        packet._dtype = 'EmptyPayload'
+        return packet
