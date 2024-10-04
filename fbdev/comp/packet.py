@@ -4,7 +4,7 @@
 
 # %% ../../nbs/api/00_comp/00_packet.ipynb 4
 from __future__ import annotations
-from typing import Any, Type, NewType
+from typing import Any, Type
 from datetime import datetime
 from datetime import datetime, timezone
 from abc import ABC, abstractmethod
@@ -17,7 +17,7 @@ from .._utils import SingletonMeta
 __all__ = ['PacketUUID', 'BasePacket', 'Packet']
 
 # %% ../../nbs/api/00_comp/00_packet.ipynb 5
-PacketUUID = NewType('PacketUUID', int)
+PacketUUID = int
 
 # %% ../../nbs/api/00_comp/00_packet.ipynb 7
 class BasePacket(ABC):

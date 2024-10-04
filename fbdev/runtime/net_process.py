@@ -58,9 +58,9 @@ class NetProcess(BaseNetRuntime):
     async def await_stop(self):
         # Tried doing this by creating an event self._stop_event.
         # For some reason this would cause all tasks to just hang forever.
-        # So instead, we just wait for the net to terminate.
+        # So instead, we just wait for the net to stop.
         # Really perplexing...
-        await self._net.exec_coros(self._net.states.terminated.wait(True), print_all_exceptions=False)
+        await self._net.task_manager.exec_coros(self._net.states.stopped.wait(True), print_all_exceptions=False)
     
     async def stop(self):
         await super().stop()
@@ -68,8 +68,8 @@ class NetProcess(BaseNetRuntime):
             self._stop_listener_task.cancel()
             try: await self._stop_listener_task
             except asyncio.CancelledError: pass
-        await self._net.exec_coros(self._net.terminate(), print_all_exceptions=False)
+        await self._net.task_manager.exec_coros(self._net.stop(), print_all_exceptions=False)
         self._stopped = True
         
     async def await_message(self, name:str):
-        await self._net.exec_coros(self._net.await_message(name), print_all_exceptions=False)
+        await self._net.task_manager.exec_coros(self._net.await_message(name), print_all_exceptions=False)

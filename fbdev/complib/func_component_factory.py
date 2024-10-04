@@ -91,7 +91,7 @@ class FunctionComponentFactory(ExecComponent):
             output = await self.__class__._func(**kwargs)
         else:
             output = self.__class__._func(**kwargs)
-
+        
         if len(self.ports.output) == 1:
             await self.ports.output.out.put(Packet(output))
         elif len(self.ports.output) > 1:

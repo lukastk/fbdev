@@ -5,7 +5,7 @@
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 4
 from __future__ import annotations
 from types import MappingProxyType
-from typing import Type, Optional, Union, Dict, List
+from typing import Type, Optional, Union, Dict, List, Any
 from fastcore.basics import patch_to
 from IPython.display import Markdown
 
@@ -168,11 +168,14 @@ class NodeSpec:
     def __init__(self, 
                  component_type:Type[BaseComponent],
                  parent_graph:GraphSpec=None,
-                 id:str=None):
+                 id:str=None,
+                 node_type:Type[fbdev.graph.net.BaseNode]=None):
+        if node_type is None: node_type = fbdev.graph.net.Node
         self._id = id
         self._component_type = component_type
         self._parent_graph = parent_graph
         self._edge_connections: Dict[PortID, str] = {}
+        self._node_type = node_type
         
     @property
     def id(self) -> str: return self._id
@@ -183,7 +186,10 @@ class NodeSpec:
         elif self.id.startswith(self.component_name): _id = "..." + self.id[len(self.component_name):]
         else: _id = self.id
         return f"{self.component_name}[{_id}]"
-    
+    @property
+    def node_type(self) -> Type[fbdev.graph.net.BaseNode]: return self._node_type
+    @property
+    def node_args(self) -> List[Any]: return self._node_args
     @property
     def edge_connections(self) -> MappingProxyType[PortID, EdgeSpec]:
         edges = {port_id : self._parent_graph.edges[edge_id] for port_id, edge_id in self._edge_connections.items()}
@@ -234,6 +240,9 @@ class NodeSpec:
         port_spec = list(self.ports.input.values())[0]
         other >> port_spec
         return other
+    
+    def create_node(self, parent_net:fbdev.graph.net.Net|None=None) -> fbdev.graph.net.BaseNode:
+        return self.node_type(self, parent_net)
 
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 12
 class GraphSpec:
@@ -289,7 +298,7 @@ class GraphSpec:
         if node_id == GraphSpec.GRAPH_ID: return self
         else: return self._nodes[node_id]
     
-    def add_node(self, component_type:Type[BaseComponent], id:Optional[str]=None) -> NodeSpec:
+    def add_node(self, component_type:Type[BaseComponent], id:Optional[str]=None, node_type:Type[fbdev.graph.net.BaseNode]=None) -> NodeSpec:
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         if id is None:
             num_comps = len([node for node in self._nodes.values() if node.component_type == component_type])
@@ -298,7 +307,7 @@ class GraphSpec:
         if type(id) != str: raise TypeError(f"Node id must be a string, got {type(id)}")
         if id == GraphSpec.GRAPH_ID: raise ValueError(f"Node id '{id}' is reserved for the graph itself.")
         if not is_valid_name(id): raise ValueError(f"'{id}' is not a valid Node id.")
-        node = NodeSpec(component_type=component_type, parent_graph=self, id=id)
+        node = NodeSpec(component_type=component_type, parent_graph=self, id=id, node_type=node_type)
         self._nodes[str(id)] = node
         return node
     
@@ -407,7 +416,7 @@ class GraphSpec:
     def copy(self) -> GraphSpec:
         graph = GraphSpec(self._port_specs, inherit_base_component_ports=False)
         for node in self._nodes.values():
-            graph.add_node(node.component_type, id=node.id)
+            graph.add_node(node.component_type, id=node.id, node_type=node.node_type)
         for edge in self._edges.values():
             graph.add_edge(edge.maxsize, id=edge.id)
         for node in self._nodes.values():

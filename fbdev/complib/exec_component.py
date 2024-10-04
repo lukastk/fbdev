@@ -30,12 +30,12 @@ class ExecComponent(BaseComponent):
         self._main_task: asyncio.Task = None
     
     async def _post_start(self):
-        self._task_manager.create_task(self._pre_execute())
+        self.task_manager.create_task(self._pre_execute())
         if self.execute_after_start:
-            self._task_manager.create_task(
+            self.task_manager.create_task(
                 self.ports[(PortType.SIGNAL, 'execute')]._put(Packet.get_empty())
             )
-        self._main_task = self._task_manager.create_task(self._pre_execute())
+        self._main_task = self.task_manager.create_task(self._pre_execute())
     
     async def _pre_execute(self):
         if not self.loop_execution:
@@ -43,7 +43,7 @@ class ExecComponent(BaseComponent):
         await self.update_config()
         await self._execute()
         await self.send_message('executed')
-        self._main_task = self._task_manager.create_task(self._pre_execute())
+        self._main_task = self.task_manager.create_task(self._pre_execute())
     
     @abstractmethod
     async def _execute(self):

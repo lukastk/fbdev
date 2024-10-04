@@ -6,13 +6,13 @@
 from __future__ import annotations
 import asyncio
 from enum import Enum
-from typing import List, Dict, Callable, Any, Tuple, NewType, Iterator
+from typing import List, Dict, Callable, Any, Tuple, Iterator, Type
 from types import MappingProxyType
 from abc import ABC, abstractmethod
 
 import fbdev
 from .packet import BasePacket, Packet
-from .._utils import SingletonMeta, AttrContainer, StateHandler, StateCollection, is_valid_name
+from .._utils import SingletonMeta, AttrContainer, StateHandler, StateCollection, is_valid_name, EventCollection, EventHandler
 
 # %% auto 0
 __all__ = ['PortID', 'PortType', 'PortSpec', 'PortSpecCollection', 'BasePort', 'Port', 'PortCollection']
@@ -42,7 +42,7 @@ class PortType(Enum):
         raise RuntimeError(f"Port type {port_type_label} does not exist.")
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 7
-PortID = NewType('PortID', Tuple[PortType, str])
+PortID = Tuple[PortType, str]
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 9
 class PortSpec:
@@ -241,6 +241,9 @@ class BasePort(ABC):
     @property
     @abstractmethod
     def states(self) -> StateCollection: ...
+    @property
+    @abstractmethod
+    def events(self) -> EventCollection: ...
         
     @abstractmethod
     async def _put(self, packet:BasePacket): ...
@@ -271,6 +274,12 @@ class Port(BasePort):
         self._states._add_state(StateHandler("is_blocked", False)) # If input port, it's blocked if the component is currently getting. If output port, it's blocked if the component is currently putting.
         self._states._add_state(StateHandler("put_awaiting", False))
         self._states._add_state(StateHandler("get_awaiting", False))
+        
+        self._events = EventCollection()
+        self._events._add_event(EventHandler("put_requested"))
+        self._events._add_event(EventHandler("put_fulfilled"))
+        self._events._add_event(EventHandler("get_requested"))
+        self._events._add_event(EventHandler("get_fulfilled"))
         
         self._packet_queue = asyncio.Queue(maxsize=1)
         self._num_waiting_gets = 0
@@ -303,6 +312,8 @@ class Port(BasePort):
     def data_validator(self) -> Callable[[Any], bool]: return self._data_validator
     @property
     def states(self) -> StateCollection: return self._states
+    @property
+    def events(self) -> EventCollection: return self._events
         
     async def __initiate_handshake(self):
         handshake_received_event = asyncio.Event()
@@ -317,6 +328,7 @@ class Port(BasePort):
         if not isinstance(packet, BasePacket): raise ValueError(f"`packet` is not of type `{BasePacket.__name__}`.")
         if packet.is_consumed: raise RuntimeError(f"Tried to put already-consumed packet: '{packet.uuid}'.")
         if self.is_output_port: self.states._is_blocked.set(True)
+        self.events.put_requested._trigger()
         self._num_waiting_puts += 1
         self.states._put_awaiting.set(True)
         await self.__initiate_handshake()
@@ -325,9 +337,11 @@ class Port(BasePort):
         if self._num_waiting_puts == 0:
             self.states._put_awaiting.set(False)
             if self.is_output_port: self.states._is_blocked.set(False)
+        self.events.put_fulfilled._trigger()
     
     async def _get(self) -> BasePacket:
         if self.is_input_port: self.states._is_blocked.set(True)
+        self.events.get_requested._trigger()
         self.states._get_awaiting.set(True)
         self._num_waiting_gets += 1
         await self.__request_handshake()
@@ -336,6 +350,7 @@ class Port(BasePort):
         if self._num_waiting_gets == 0:
             self.states._get_awaiting.set(False)
             if self.is_input_port: self.states._is_blocked.set(False)
+        self.events.get_fulfilled._trigger()
         if packet.is_consumed: raise RuntimeError(f"Got already-consumed packet: '{packet.uuid}'.")
         return packet
 
@@ -347,9 +362,9 @@ class PortCollection:
         for port_type in PortType:
             setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortCollection.__name__}.{port_type.label}"))
         for port_spec in port_spec_collection.iter_ports():
-            self.__add_port(Port(port_spec))
+            self._add_port(Port(port_spec))
     
-    def __add_port(self, port:Port):
+    def _add_port(self, port:Port):
         if not is_valid_name(port.name): raise ValueError(f"Invalid port name '{port.name}'.")
         if port.id in self._ports: raise ValueError(f"Port name '{port.name}' already exists in {self.__class__.__name__}.")
         self._ports[port.id] = port

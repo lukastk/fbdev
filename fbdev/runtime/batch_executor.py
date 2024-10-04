@@ -31,9 +31,9 @@ class BatchExecutor(BaseNetRuntime):
         super().__init__()
         self._net:Net = net
     
-    def _setup_execution_coro(self, *args, config_vals={}, signals=set(), ports_to_get=None, **kwargs):
+    def _setup_execution(self, *args, config_vals={}, signals=set(), ports_to_get=None, **kwargs):
         if self._net.states.started.get(): raise RuntimeError("Net has already started.")
-        if self._net.states.terminated.get(): raise RuntimeError("Cannot run terminated Net.")
+        if self._net.states.stopped.get(): raise RuntimeError("Cannot run stopped Net.")
         
         if ports_to_get is None:
             ports_to_get = [port.id for port in self._net.ports.output.values()]
@@ -45,30 +45,29 @@ class BatchExecutor(BaseNetRuntime):
         
         async def main():
             await self._net.start()
-            await self._net.exec_coros(*input_senders, *config_senders, *output_receivers, *message_receivers)
-            await self._net.exec_coros(self._net.terminate())
+            await self._net.task_manager.exec_coros(*input_senders, *config_senders, *output_receivers, *message_receivers)
+            await self._net.task_manager.exec_coros(self._net.stop())
             
         return main(), output_vals
 
     def start(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
         """Note: this method cannot be run from within an event loop."""
         super().start()
-        exec_coro, output = self._setup_execution_coro(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
-        asyncio.run(exec_coro)
+        coro, output = self._setup_execution(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
+        asyncio.run(coro)
         self._started = True
         return output
     
     async def astart(self, *args, config={}, signals=set(), ports_to_get:List[PortID]|None=None, **kwargs):
         await super().astart()
-        exec_coro, output = self._setup_execution_coro(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
-        await exec_coro
+        coro, output = self._setup_execution(*args, config_vals=config, signals=signals, ports_to_get=ports_to_get, **kwargs)
+        await coro
         self._started = True
         return output
     
     async def stop(self):
         await super().stop()
-        if self._net is not None:
-            if not self._net.states.terminated.get():
-                await self._net.terminate()
-            self._net = None
+        if not self._net.states.stopped.get():
+            if not self._net.states.stopped.get():
+                await self._net.task_manager.exec_coros(self._net.stop())
         self._stopped = True

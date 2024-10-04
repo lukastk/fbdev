@@ -24,7 +24,7 @@ import fbdev
 __all__ = ['is_valid_name', 'is_mutually_exclusive', 'is_in_event_loop', 'await_multiple_events', 'await_any_event',
            'AttrContainer', 'ReadonlyEvent', 'EventHandler', 'EventCollection', 'StateHandler', 'StateView',
            'StateCollection', 'TaskManager', 'get_git_root_directory', 'root_dir', 'extract_top_level_docstring',
-           'get_function_from_py_file', 'SingletonMeta']
+           'get_function_from_py_file', 'SingletonMeta', 'abstractproperty']
 
 # %% ../nbs/api/utils.ipynb 5
 def is_valid_name(name: str) -> bool:
@@ -159,18 +159,24 @@ class ReadonlyEvent:
 class EventHandler:
     """Subscribable events"""
     def __init__(self, name):
-        self._events = []
+        self._events: List[asyncio.Event] = []
+        self._callbacks: List[Callable] = []
         self.name = name
     
     def subscribe(self):
         event = asyncio.Event()
         self._events.append(event)
         return event
+    
+    def register_callback(self, callback):
+        self._callbacks.append(callback)
 
     def _trigger(self):
         for event in self._events:
             event.set()
         self._events.clear()
+        for callback in self._callbacks:
+            callback()
         
     def __str__(self):
         return f"EventHandler(name='{self.name}')"
@@ -306,7 +312,7 @@ class TaskManager:
             while True:
                 await asyncio.sleep(0)
                 async with self._tasks_non_empty_condition:
-                    await self._tasks_non_empty_condition.wait_for(lambda: len(self._tasks) > 0) 
+                    await self._tasks_non_empty_condition.wait_for(lambda: len(self._tasks) > 0)
                 done, pending = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
                 for task in done:
                     try:
@@ -362,9 +368,9 @@ class TaskManager:
         self._callbacks.append(callback)
         
     def submit_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple[Any, ...]):
-        self._registered_exceptions.append((task, exception, source_trace + (self._host,)))
+        self._registered_exceptions.append((task, exception, source_trace + (str(self._host),)))
         for callback in self._callbacks:
-            callback(task, exception, source_trace + (self._host,))
+            callback(task, exception, source_trace + (str(self._host),))
         async def _notify():
             async with self._exceptions_non_empty_condition:
                 self._exceptions_non_empty_condition.notify_all()
@@ -381,6 +387,41 @@ class TaskManager:
         qualnames = [task.get_coro().__qualname__ for task in self._tasks]
         qualname_counts = {name : qualnames.count(name) for name in set(qualnames)}
         return qualname_counts
+    
+    async def exec_coros(self, *coros: List[Coroutine], print_all_exceptions=True):
+        """Run a coroutine and monitor for exceptions in the coroutine, as well as
+        any exceptions that occurs in the task manager. Therefore, for it to work
+        as expected, the coroutine must be starting tasks using self.create_task(),
+        or tasks that are created by task managers linked to this task manager.
+        """
+        results = []
+        async def all_coros():
+            _tasks = [asyncio.create_task(coro) for coro in coros]
+            await asyncio.gather(*_tasks)
+            for task in _tasks: results.append(task.result())
+        task = asyncio.create_task(all_coros())
+        monitor_task = asyncio.create_task(self.wait_for_exceptions())
+        await asyncio.wait([task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
+        exceptions = self.get_exceptions()
+        if task.done():
+            try: await task
+            except Exception as e: exceptions.append((task, e, ()))
+        if not monitor_task.done():
+            monitor_task.cancel()
+        
+        if print_all_exceptions:
+            for i, (task, e, source_trace) in enumerate(exceptions):
+                msg = f"Message: {e}\n\n{''.join(traceback.format_exception(type(e), e, e.__traceback__))}\n\n"
+                msg = "\n".join([f"    {line}" for line in msg.split("\n")])
+                print(f"Exception {i+1} ({e.__class__.__name__}):")
+                print(msg)
+                
+        for task, e, source_trace in exceptions:
+            raise e
+        
+        if len(results) == 1: return results[0]
+        else: return results
+    
 
 # %% ../nbs/api/utils.ipynb 34
 def get_git_root_directory():
@@ -523,3 +564,7 @@ class SingletonMeta(type):
         if dct is None:
             dct = {}
         return super().__new__(metacls, name, bases, dct)
+
+# %% ../nbs/api/utils.ipynb 56
+def abstractproperty(func):
+    return property(abstractmethod(func))

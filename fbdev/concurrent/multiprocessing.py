@@ -7,51 +7,186 @@ from __future__ import annotations
 import asyncio
 from enum import Enum
 from types import MappingProxyType
-from typing import Type, Callable, Any, Tuple, Coroutine, List, Dict, NewType
+from typing import Type, Callable, Any, Tuple, Coroutine, List, Dict, Hashable, Set
 import uuid
 import traceback
 import multiprocessing
 from multiprocessing import Pipe
+from multiprocessing.connection import Connection
 import uuid
+import inspect
+from abc import ABC, abstractmethod
 
 import fbdev
-from .._utils import AttrContainer, TaskManager, StateCollection, StateHandler, await_multiple_events
-from ..exceptions import ComponentError
+from .._utils import StateCollection, StateHandler, AttrContainer, TaskManager, EventCollection, EventHandler
+from ..exceptions import NodeError
 from ..comp.packet import BasePacket, Packet
 from ..comp.port import PortType, PortSpec, PortSpecCollection, BasePort, Port, PortCollection, PortID
 from ..comp.base_component import BaseComponent
 from ..graph.packet_registry import LocationUUID
 from ..graph.graph_spec import GraphSpec, NodeSpec, EdgeSpec
 from ..graph.packet_registry import TrackedPacket, PacketRegistry
-from ..graph.net import Node
+from ..graph.net import BaseNode, Node, NodePort, Edge, BaseNodePort, Net
 
 # %% auto 0
-__all__ = ['ProxyPortMessages', 'ProxyPort', 'RemotePortHandler']
+__all__ = ['AsyncRemoteController', 'RemotePortHandler', 'ProxyPort', 'ProxyPortCollection', 'RemoteNodeError',
+           'remote_node_worker', 'ProxyNode']
 
-# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 6
-class ProxyPortMessages(Enum):
-    PUT = 1
-    PUT_SUCCESSFUL = 2
-    GET = 3
-    GET_SUCCESSFUL = 4
-
-# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 8
-class ProxyPort(BasePort):
-    def __init__(self, port_spec:PortSpec, conn:Pipe):
-        self._port_spec = port_spec
+# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 7
+class AsyncRemoteController:
+    class CommMessages(Enum):
+        DO = 0
+        DO_SUCCESSFUL = 1
+    
+    def __init__(self, conn:Connection, task_manager:TaskManager, routines:Dict[Hashable, Coroutine|Callable], remote_routines:Set[Hashable]):
         self._conn = conn
+        self._routines = routines
+        self._remote_routines = remote_routines
+        self._send_tickets: Dict[int, asyncio.Queue] = {}
+        self._task_manager = task_manager
+        self._task_manager.create_task(self._comms_monitor())
+    
+    async def _do_callback(self, routine_key, coro, comm_id):
+        try:
+            val = await coro
+        except Exception as e:
+            # For some reason no exceptions raised here are caught by the TaskManager, so have to print them instead...
+            # TODO: Fix this
+            print(f"Exception in AsyncRemoteController: {e}")
+            print(f"Routine key: {routine_key}")
+            print(f"Coro: {coro}")
+            raise
+        
+        try:
+            self._conn.send((self.CommMessages.DO_SUCCESSFUL, comm_id, routine_key, None, None, val))
+        except OSError as e:
+            if not self._conn.closed: raise e
+            return
+        
+    def _do_callback_sync(self, routine_key, func, comm_id, args, kwargs):
+        val = func(*args, **kwargs)
+        try:
+            self._conn.send((self.CommMessages.DO_SUCCESSFUL, comm_id, routine_key, None, None, val))
+        except OSError as e:
+            if not self._conn.closed: raise e
+            return
+    
+    async def _comms_monitor(self):
+        loop = asyncio.get_running_loop()
+        while True:
+            await asyncio.sleep(0)
+            try:
+                msg, comm_id, routine_key, args, kwargs, return_val = await loop.run_in_executor(None, self._conn.recv)
+            except EOFError as e:
+                if not self._conn.closed: raise e
+                # If the connection is closed, then we will presume everything is in order
+                return
+            except OSError as e:
+                if not self._conn.closed: raise e
+                return
+                
+            if msg == self.CommMessages.DO:
+                if routine_key in self._routines:
+                    routine = self._routines[routine_key]
+                    if inspect.iscoroutinefunction(routine):
+                        self._task_manager.create_task(self._do_callback(routine_key, routine(*args, **kwargs), comm_id))
+                    else:
+                        self._do_callback_sync(routine_key, routine, comm_id, args, kwargs)
+                else:
+                    raise RuntimeError(f"Unexpected routine: {routine_key}")
+            elif msg == self.CommMessages.DO_SUCCESSFUL:
+                if comm_id in self._send_tickets:
+                    await self._send_tickets[comm_id].put(return_val)
+                else:
+                    raise RuntimeError(f"Unexpected comm_id: {comm_id}")
+            else:
+                raise RuntimeError(f"Unexpected message: {msg}")
+    
+    async def do(self, routine_key:Hashable, *args, **kwargs):
+        if routine_key not in self._remote_routines:
+            raise ValueError(f"Command '{routine_key}' is not a remote routine.")
+        comm_id = uuid.uuid4().int
+        self._send_tickets[comm_id] = asyncio.Queue()
+        self._conn.send((self.CommMessages.DO, comm_id, routine_key, args, kwargs, None))
+        return_val = await self._send_tickets[comm_id].get()
+        del self._send_tickets[comm_id]
+        return return_val
+    
+    def do_sync(self, routine_key:Hashable, *args, **kwargs):
+        if routine_key not in self._remote_routines:
+            raise ValueError(f"Command '{routine_key}' is not a remote routine.")
+        
+        self._task_manager.create_task(self.do(routine_key, *args, **kwargs))
+    
+    def close(self):
+        self._conn.close()
+
+# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 10
+class RemotePortHandler:
+    def __init__(self, port:Port, conn:Connection, task_manager:TaskManager):
+        self._port = port
+        self._task_manager = task_manager
+        self._remote = AsyncRemoteController(conn, task_manager,
+            routines={
+                'parent_put' : self._parent_put,
+                'parent_get' : self._parent_get,
+            }, remote_routines={
+                'child_put_requested',
+                'child_put_fulfilled',
+                'child_get_requested',
+                'child_get_fulfilled',
+            })
+        
+        self._port.events.put_requested.register_callback(lambda: self._remote.do_sync('child_put_requested'))
+        self._port.events.put_fulfilled.register_callback(lambda: self._remote.do_sync('child_put_fulfilled'))
+        self._port.events.get_requested.register_callback(lambda: self._remote.do_sync('child_get_requested'))
+        self._port.events.get_fulfilled.register_callback(lambda: self._remote.do_sync('child_get_fulfilled'))
+
+    async def _parent_put(self, packet:BasePacket):
+        await self._port._put(packet)
+        
+    async def _parent_get(self):
+        return await self._port._get()
+    
+    def close(self):
+        self._remote.close()
+
+# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 12
+class ProxyPort(BaseNodePort):
+    def __init__(self, port_spec:PortSpec, parent_node:Node, conn:Connection, task_manager:TaskManager):
+        self._parent_node = parent_node
+        self._port_spec = port_spec
+        self._task_manager = task_manager
+        self._remote = AsyncRemoteController(conn, self._task_manager,
+            routines = {
+                'child_put_requested' : self._put_requested,
+                'child_put_fulfilled' : self._put_fulfilled,
+                'child_get_requested' : self._get_requested,
+                'child_get_fulfilled' : self._get_fulfilled,
+            },
+            remote_routines = {
+                'parent_put',
+                'parent_get',
+            })
         self._awaiting_puts:Dict[int, asyncio.Event] = {}
         self._awaiting_gets:Dict[int, asyncio.Queue] = {}
-        self._monitor_task:asyncio.Task = None
         
         self._states = StateCollection()
         self._states._add_state(StateHandler("is_blocked", False)) # If input port, it's blocked if the component is currently getting. If output port, it's blocked if the component is currently putting.
         self._states._add_state(StateHandler("put_awaiting", False))
         self._states._add_state(StateHandler("get_awaiting", False))
         
+        self._events = EventCollection()
+        self._events._add_event(EventHandler("put_requested"))
+        self._events._add_event(EventHandler("put_fulfilled"))
+        self._events._add_event(EventHandler("get_requested"))
+        self._events._add_event(EventHandler("get_fulfilled"))
+        
         self._packet_queue = asyncio.Queue(maxsize=1)
         self._num_waiting_gets = 0
         self._num_waiting_puts = 0
+        
+        super().__init__()
         
     @property
     def spec(self) -> PortSpec: return self._port_spec
@@ -71,77 +206,181 @@ class ProxyPort(BasePort):
     def data_validator(self) -> Callable[[Any], bool]: return self.spec.data_validator
     @property
     def states(self) -> StateCollection: return self._states
+    @property
+    def events(self) -> EventCollection: return self._events
+    @property
+    def parent_node(self) -> BaseNode: return self._parent_node
+    @property
+    def packet_registry(self) -> PacketRegistry: return self._parent_node._packet_registry
 
-    async def run(self):
-        try:
-            loop = asyncio.get_running_loop()
-            while True:
-                msg, packet, comm_id = await loop.run_in_executor(None, self._conn.recv)
-                if msg == ProxyPortMessages.PUT_SUCCESSFUL:
-                    self._awaiting_puts[comm_id].set()
-                elif msg == ProxyPortMessages.GET_SUCCESSFUL:
-                    await self._awaiting_gets[comm_id].put(packet)
-                else:
-                    raise RuntimeError(f"Unexpected message: {msg}")
-        finally:
-            self._conn.close()
-
-    async def _put(self, packet:BasePacket):
+    def _put_requested(self):
+        self.events.put_requested._trigger()
         self._num_waiting_puts += 1
         if self.is_output_port: self.states._is_blocked.set(True)
         self.states._put_awaiting.set(True)
-        loop = asyncio.get_running_loop()
-        comm_id = uuid.uuid4().int
-        self._awaiting_puts[comm_id] = asyncio.Event()
-        self._conn.send((ProxyPortMessages.PUT, packet, comm_id))
-        await self._awaiting_puts[comm_id].wait()
-        del self._awaiting_puts[comm_id]
+        
+    def _put_fulfilled(self):
+        self.events.put_fulfilled._trigger()
         self._num_waiting_puts -= 1
         if self._num_waiting_puts == 0:
             self.states._put_awaiting.set(False)
             if self.is_output_port: self.states._is_blocked.set(False)
-    
-    async def _get(self):
+
+    def _get_requested(self):
+        self.events.get_requested._trigger()
         if self.is_input_port: self.states._is_blocked.set(True)
         self._num_waiting_gets += 1
         self.states._get_awaiting.set(True)
-        loop = asyncio.get_running_loop()
-        comm_id = uuid.uuid4().int
-        self._awaiting_gets[comm_id] = asyncio.Queue()
-        self._conn.send((ProxyPortMessages.GET, None, comm_id))
+        
+    def _get_fulfilled(self):
+        self.events.get_fulfilled._trigger()
         self._num_waiting_gets -= 1
         if self._num_waiting_gets == 0:
             self.states._get_awaiting.set(False)
             if self.is_input_port: self.states._is_blocked.set(False)
-        packet = await self._awaiting_gets[comm_id].get()
-        del self._awaiting_gets[comm_id]
+        
+    async def _put(self, packet:BasePacket):
+        self._put_requested()
+        await self._remote.do('parent_put', packet)
+        self._put_fulfilled()
+    
+    async def _get(self):
+        self._get_requested()
+        packet = await self._remote.do('parent_get')
+        self._get_fulfilled()
         return packet
+    
+    async def _put_from_external(self, packet:BasePacket):
+        await NodePort._put_from_external(self, packet)
+        
+    async def _get_to_external(self) -> TrackedPacket:
+        return await NodePort._get_to_external(self)
+    
+    async def _put_value_from_external(self, val:Any):
+        await NodePort._put_value_from_external(self, val)
+        
+    async def _get_and_consume_to_external(self) -> Any:
+        return await NodePort._get_and_consume_to_external(self)
+    
+    def close(self):
+        self._remote.close()
 
-# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 10
-class RemotePortHandler:
-    def __init__(self, port:Port, conn:Pipe):
-        self._port = port
-        self._conn = conn
-        self._monitor_task:asyncio.Task = None
+# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 14
+class ProxyPortCollection(PortCollection):
+    def __init__(self, port_spec_collection:PortSpecCollection, parent_node:Node, conns:List[Connection]):
+        self._port_spec_collection: PortSpecCollection = port_spec_collection
+        self._ports: Dict[str, Port] = {}
+        for port_type in PortType:
+            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{ProxyPortCollection.__name__}.{port_type.label}"))
+        for port_spec, conn in zip(port_spec_collection.iter_ports(), conns):
+            self._add_port(ProxyPort(port_spec, parent_node, conn, parent_node.task_manager))
+
+# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 16
+class RemoteNodeError(NodeError): pass
+
+def remote_node_worker(node_spec:NodeSpec, port_conns:List[Connection], communication_conn:Connection):
+    asyncio.run(_async_remote_node_worker(node_spec, port_conns, communication_conn))
+    
+async def _async_remote_node_worker(node_spec:NodeSpec, port_conns:List[Connection], communication_conn:Connection):
+    def _handle_remote_node_exception(task:asyncio.Task, exception:Exception, source_trace:Tuple):
+        remote_controller.do_sync('submit_exception_from_remote', exception, source_trace)
+            
+    async def _start_node():
+        await node.start()
         
-    async def run(self):
+    async def _stop_node():
+        await node.stop()
+        stop_event.set()
+
+    try:
+        stop_event = asyncio.Event()
+        task_manager = TaskManager('handle_remote_node')
+        task_manager.subscribe(_handle_remote_node_exception)
+        node = Node(node_spec, None)
+        node.task_manager.subscribe(_handle_remote_node_exception)
+        remote_port_handlers: Dict[PortID, RemotePortHandler] = {}
+        for port, port_conn in zip(node.ports.iter_ports(), port_conns):
+            remote_port_handlers[port.id] = RemotePortHandler(port, port_conn, task_manager)
+        remote_controller = AsyncRemoteController(communication_conn, task_manager,
+            routines = {
+                'start_node' : _start_node,
+                'stop_node' : _stop_node,
+            },
+            remote_routines = {
+                'submit_exception_from_remote',
+            }
+        )
+        
+        await stop_event.wait()
+        #await task_manager.exec_coros(stop_event.wait())
+    except Exception as e:
+        await remote_controller.do('submit_exception_from_remote', e)
+    finally:
+        await task_manager.destroy()
+        if node.states.started.get() and not node.states.stopped.get():
+            await node.stop()
+        for remote_port_handle in remote_port_handlers.values():
+            remote_port_handle.close()
+        remote_controller.close()
+
+# %% ../../nbs/api/03_concurrent/00_multiprocessing.ipynb 17
+class ProxyNode(BaseNode):
+    def __init__(self, node_spec: NodeSpec, parent_net:BaseNode|None):
+        super().__init__(node_spec, parent_net)
+        self._packet_registry: PacketRegistry = None
+        if self._parent_net:
+            self._packet_registry: PacketRegistry = self._parent_net._packet_registry
+        else:
+            self._packet_registry = PacketRegistry()
+            
+        self.__start_lock = asyncio.Lock()
+        self.__terminate_lock = asyncio.Lock()
+        
+        pipes = [multiprocessing.Pipe() for _ in self.port_specs]
+        parent_conns = [pipe[0] for pipe in pipes]
+        child_conns = [pipe[1] for pipe in pipes]
+        self._port_proxies = ProxyPortCollection(self.component_type.port_specs, self, parent_conns)
+        
+        parent_remote_node_communication_conn, child_remote_node_communication_conn = multiprocessing.Pipe()
+        self._remote_controller = AsyncRemoteController(parent_remote_node_communication_conn, self.task_manager,
+            routines = {
+                'submit_exception_from_remote' : self._submit_exception_from_remote,
+            },
+            remote_routines = {
+                'start_node',
+                'stop_node',
+            }
+        )
+        
+        self._remote_node_proc = multiprocessing.Process(target=remote_node_worker, args=(node_spec, child_conns, child_remote_node_communication_conn))
+        self._remote_node_proc.start()
+    
+    @property
+    def states(self): return self._states
+    @property
+    def ports(self) -> PortCollection: return self._port_proxies
+    @property
+    def edge_connections(self) -> MappingProxyType[PortID, Edge]: ...
+    @property
+    def component_process(self) -> BaseComponent:
+        raise RuntimeError(f"{self.__class__.__name__} does not have a component_process.")
+    @property
+    def packet_registry(self) -> PacketRegistry: return self._packet_registry
+    
+    def _submit_exception_from_remote(self, exception, source_trace):
         try:
-            loop = asyncio.get_running_loop()
-            while True:
-                msg, packet, comm_id = await loop.run_in_executor(None, self._conn.recv)
-                if msg == ProxyPortMessages.PUT:
-                    asyncio.create_task(self._packet_putter(packet, comm_id))
-                elif msg == ProxyPortMessages.GET:
-                    asyncio.create_task(self._packet_getter(comm_id))
-                else:
-                    raise RuntimeError(f"Unexpected message: {msg}")
-        finally:
-            self._conn.close()
+            raise RemoteNodeError() from exception
+        except RemoteNodeError as e:
+            self.task_manager.submit_exception(None, exception, source_trace)
+    
+    async def start(self):
+        async with self.__start_lock:
+            await self._remote_controller.do('start_node')
         
-    async def _packet_putter(self, packet:BasePacket, comm_id:int):
-        await self._port._put(packet)
-        self._conn.send((ProxyPortMessages.PUT_SUCCESSFUL, None, comm_id))
-        
-    async def _packet_getter(self, comm_id:int):
-        packet = await self._port._get()
-        self._conn.send((ProxyPortMessages.GET_SUCCESSFUL, packet, comm_id))
+    async def stop(self):
+        async with self.__terminate_lock:
+            await self._remote_controller.do('stop_node')
+            self._remote_node_proc.join()
+            self._remote_controller.close()
+            for port_proxy in self._port_proxies.iter_ports():
+                port_proxy.close()

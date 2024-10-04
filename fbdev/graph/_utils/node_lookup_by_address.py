@@ -9,16 +9,16 @@ from fastcore.basics import patch_to
 
 import fbdev
 from ...comp.port import PortType
-from ..net import Address, Node, Net, NodePort, Edge
+from ..net import Address, BaseNode, Node, Net, NodePort, Edge, BaseNodePort
 
 # %% auto 0
 __all__ = []
 
 # %% ../../../nbs/api/01_graph/utils/01_node_lookup_by_address.ipynb 7
 __delimiters = {
-    Node._address_delimiter : Node,
+    BaseNode._address_delimiter : BaseNode,
     Edge._address_delimiter : Edge,
-    NodePort._address_delimiter : NodePort,
+    BaseNodePort._address_delimiter : NodePort,
 }
 def _get_next_address_part(address:Address) -> Tuple[str, Address, Type]:
     _ds = [(address.find(d), d) for d in __delimiters.keys() if address.find(d) != -1]

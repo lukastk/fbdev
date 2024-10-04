@@ -23,7 +23,7 @@ class BaseComponent(ABC):
     
     port_specs = PortSpecCollection(
         PortSpec(PortType.MESSAGE, 'started'),
-        PortSpec(PortType.MESSAGE, 'terminated')
+        PortSpec(PortType.MESSAGE, 'stopped')
     )
     
     def __init_subclass__(cls, inherit_ports=True, **kwargs):
@@ -40,14 +40,16 @@ class BaseComponent(ABC):
         self._config = AttrContainer({}, obj_name="Component.config")
         self.__started = False
         self.__start_lock = asyncio.Lock()
-        self.__terminated = False
-        self.__terminate_lock = asyncio.Lock()
+        self.__stopped = False
+        self.__stop_lock = asyncio.Lock()
         self.__base_constructor_was_called = True
          
     @property
     def ports(self) -> PortCollection: return self._ports
     @property
     def config(self) -> AttrContainer: return self._config
+    @property
+    def task_manager(self) -> TaskManager: return self._task_manager
 
     def __check_base_constructor_was_called(self):
         try: return self.__base_constructor_was_called
@@ -58,8 +60,8 @@ class BaseComponent(ABC):
             if self.__started: raise RuntimeError(f"Component {self.__class__.__name__} is already started.")
             if not self.__check_base_constructor_was_called():
                 raise RuntimeError(f"{BaseComponent.__name__}.__init__() was not called in component {self.__class__.__name__}.")
-            if self.__terminated:
-                raise RuntimeError(f"Component {self.__class__.__name__} is terminated.")
+            if self.__stopped:
+                raise RuntimeError(f"Component {self.__class__.__name__} is stopped.")
             if self.is_factory:
                 raise RuntimeError(f"Component {self.__class__.__name__} is a component factory.")
             await self.update_config()
@@ -71,16 +73,16 @@ class BaseComponent(ABC):
         """Post-hook for BaseComponent.start"""
         pass
     
-    async def terminate(self):
-        async with self.__terminate_lock:
-            if self.__terminated: raise RuntimeError(f"Component {self.__class__.__name__} is already terminated.")
-            await self._pre_terminate()
-            await self._task_manager.destroy()
-            self.__terminated = True
-            await self.send_message('terminated')
+    async def stop(self):
+        async with self.__stop_lock:
+            if self.__stopped: raise RuntimeError(f"Component {self.__class__.__name__} is already stopped.")
+            await self._pre_stop()
+            await self.task_manager.destroy()
+            self.__stopped = True
+            await self.send_message('stopped')
         
-    async def _pre_terminate(self):
-        """Pre-hook for BaseComponent.terminate"""
+    async def _pre_stop(self):
+        """Pre-hook for BaseComponent.stop"""
         pass
         
     async def update_config(self):
@@ -108,7 +110,7 @@ class BaseComponent(ABC):
         
     async def send_message(self, name:str, wait_until_sent=False):
         if wait_until_sent: await self.ports.message[name].put(Packet.get_empty())
-        else: self._task_manager.create_task(self.ports.message[name].put(Packet.get_empty()))
+        else: self.task_manager.create_task(self.ports.message[name].put(Packet.get_empty()))
     
     @classmethod
     def _create_component_class(cls, component_name=None, class_attrs={}, init_args=[], init_kwargs={}) -> Type[BaseComponent]:

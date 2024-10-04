@@ -45,11 +45,11 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
     
     def _handle_node_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
         try: raise NodeError() from exception
-        except NodeError as e: self._task_manager.submit_exception(task, e, source_trace)
+        except NodeError as e: self.task_manager.submit_exception(task, e, source_trace)
     
     def _handle_edge_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
         try: raise EdgeError() from exception
-        except EdgeError as e: self._task_manager.submit_exception(task, e, source_trace)
+        except EdgeError as e: self.task_manager.submit_exception(task, e, source_trace)
     
     @classmethod
     def create_component(cls, graph, expose_graph=True) -> Type[BaseComponent]:
@@ -63,19 +63,19 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
         
     async def _post_start(self):
         for node_spec in self.graph.nodes.values():
-            self._nodes[node_spec.id] = Node(node_spec, self._parent_net)
-            self._nodes[node_spec.id]._task_manager.subscribe(self._handle_node_exception)
+            self._nodes[node_spec.id] = node_spec.create_node(self._parent_net)
+            self._nodes[node_spec.id].task_manager.subscribe(self._handle_node_exception)
         for edge_spec in self.graph.edges.values():
             self._edges[edge_spec.id] = Edge(edge_spec, self._parent_net)
-            self._edges[edge_spec.id]._task_manager.subscribe(self._handle_edge_exception)
+            self._edges[edge_spec.id].task_manager.subscribe(self._handle_edge_exception)
         
         for node in self._nodes.values():
             await node.start()
         for edge in self.edges.values():
             edge.start()
             
-    async def _pre_terminate(self):
+    async def _pre_stop(self):
         for node in self._nodes.values():
-            await node.terminate()
+            await node.stop()
         for edge in self.edges.values():
             await edge.stop()

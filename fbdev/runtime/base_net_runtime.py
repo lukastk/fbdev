@@ -36,8 +36,8 @@ class BaseNetRuntime(ABC):
     @classmethod
     def from_graph(cls, graph:GraphSpec, *args, **kwargs):
         component_type = GraphComponentFactory.create_component(graph)
-        net_spec = NodeSpec(component_type)
-        net = Net(net_spec)
+        net_spec = NodeSpec(component_type, node_type=Net)
+        net = net_spec.create_node()
         return cls(net, *args, **kwargs)
     
     @classmethod

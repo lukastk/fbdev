@@ -5,13 +5,14 @@
 # %% ../../nbs/api/01_graph/02_net.ipynb 4
 from __future__ import annotations
 import asyncio
+from abc import abstractmethod, ABC
 from types import MappingProxyType
 from typing import Type, Callable, Any, Tuple, Coroutine, List, Dict, NewType
 import uuid
 import traceback
 
 import fbdev
-from .._utils import AttrContainer, TaskManager, StateCollection, StateHandler, await_multiple_events
+from .._utils import AttrContainer, TaskManager, StateCollection, StateHandler, await_multiple_events, EventCollection
 from ..comp.packet import BasePacket, Packet
 from ..comp.port import PortType, PortSpec, PortSpecCollection, BasePort, Port, PortCollection, PortID
 from ..comp.base_component import BaseComponent
@@ -21,7 +22,7 @@ from .packet_registry import TrackedPacket, PacketRegistry
 from ..exceptions import ComponentError
 
 # %% auto 0
-__all__ = ['Address', 'Edge', 'NodePortCollection', 'Node', 'Net']
+__all__ = ['Address', 'Edge', 'BaseNodePort', 'NodePortCollection', 'BaseNode', 'Node', 'Net']
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 5
 Address = NewType('Address', str)
@@ -37,7 +38,7 @@ def lookup_location_uuid(uuid_int:LocationUUID) -> Edge|Node:
     return location_uuid_entitities[uuid_int]
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 9
-class Edge():
+class Edge:
     _address_delimiter = '|'
 
     def __init__(self, edge_spec: EdgeSpec, parent_net:Net) -> None:
@@ -63,7 +64,8 @@ class Edge():
     def states(self): return self._states
     @property
     def loc_uuid(self) -> LocationUUID: return self._loc_uuid
-    
+    @property
+    def task_manager(self) -> TaskManager: return self._task_manager
     @property
     def _packet_registry(self): return self._parent_net._packet_registry
     
@@ -93,12 +95,12 @@ class Edge():
         else: return None
         
     def start(self):
-        self._edge_in_bus_task = self._task_manager.create_task(self._edge_in_bus())
-        self._edge_out_bus_task = self._task_manager.create_task(self._edge_out_bus())
+        self._edge_in_bus_task = self.task_manager.create_task(self._edge_in_bus())
+        self._edge_out_bus_task = self.task_manager.create_task(self._edge_out_bus())
     
     async def stop(self):
-        await self._task_manager.cancel_wait(self._edge_in_bus_task)
-        await self._task_manager.cancel_wait(self._edge_out_bus_task)
+        await self.task_manager.cancel_wait(self._edge_in_bus_task)
+        await self.task_manager.cancel_wait(self._edge_out_bus_task)
 
     async def _edge_in_bus(self):
         packet = None
@@ -136,13 +138,11 @@ class Edge():
         return f"{self._parent_net.address}{Edge._address_delimiter}{self.id}"
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 11
-class NodePort(BasePort):
-    """Ports in a Node will be converted to NodePorts. This is to facilitate addressing. It's mostly cosmetics."""
+class BaseNodePort(BasePort):
     _address_delimiter = ':'
     
-    def __init__(self, *, _port:Port, _parent_node: Net):
-        self._port = _port
-        self._parent_node: Net = _parent_node
+    def __init__(self):
+        super().__init__()
         
         # This is reversed from the perspective of a component, as NodePorts are something that would be interacted with *outside* of the component execution logic
         if not self.is_input_port:
@@ -150,7 +150,71 @@ class NodePort(BasePort):
             self.get_and_consume = self._get_and_consume_to_external
         else:
             self.put = self._put_from_external
-            self.put_value = self._put_value_to_external
+            self.put_value = self._put_value_from_external
+    
+    @property
+    def address(self) -> Address:
+        return f"{self._parent_node.address}{BaseNodePort._address_delimiter}{self.port_type}.{self.name}"
+
+    @property
+    @abstractmethod
+    def spec(self) -> PortSpec: ...
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+    @property
+    @abstractmethod
+    def id(self) -> str: ...
+    @property
+    @abstractmethod
+    def port_type(self) -> PortType: ...
+    @property
+    @abstractmethod
+    def dtype(self) -> type: return ...
+    @property
+    @abstractmethod
+    def is_input_port(self) -> bool: ...
+    @property
+    @abstractmethod
+    def is_output_port(self) -> bool: ...
+    @property
+    @abstractmethod
+    def data_validator(self) -> Callable[[Any], bool]: ...
+    @property
+    @abstractmethod
+    def states(self) -> StateCollection: ...
+    @property
+    @abstractmethod
+    def events(self) -> EventCollection: ...
+    @property
+    @abstractmethod
+    def parent_node(self) -> BaseNode: ...
+    @property
+    @abstractmethod
+    def packet_registry(self) -> PacketRegistry: ...
+    
+    @abstractmethod
+    async def _put(self, packet:BasePacket): ...
+    @abstractmethod
+    async def _get(self) -> TrackedPacket: ...
+    @abstractmethod
+    async def _put_from_external(self, packet:BasePacket): ...
+    @abstractmethod
+    async def _get_to_external(self) -> TrackedPacket: ...
+    @abstractmethod
+    async def _put_value_from_external(self, val:Any): ...
+    @abstractmethod
+    async def _get_and_consume_to_external(self) -> Any: ...
+
+# %% ../../nbs/api/01_graph/02_net.ipynb 13
+class NodePort(BaseNodePort):
+    """Ports in a Node will be converted to NodePorts. This is to facilitate addressing. It's mostly cosmetics."""
+    _address_delimiter = ':'
+    
+    def __init__(self, *, _port:Port, _parent_node: Net):
+        self._port = _port
+        self._parent_node: Net = _parent_node
+        super().__init__()
     
     @property
     def address(self) -> Address:
@@ -174,35 +238,39 @@ class NodePort(BasePort):
     def data_validator(self) -> Callable[[Any], bool]: return self._port.data_validator
     @property
     def states(self) -> StateCollection: return self._port.states
-    
     @property
-    def _packet_registry(self) -> PacketRegistry: return self._parent_node._packet_registry
+    def events(self) -> EventCollection: return self._port.events
+    @property
+    def parent_node(self) -> BaseNode: return self._parent_node
+    @property
+    def packet_registry(self) -> PacketRegistry: return self._parent_node._packet_registry
         
     async def _put(self, packet:BasePacket): await self._port._put(packet)
     async def _get(self) -> TrackedPacket: return await self._port._get()
     
     async def _put_from_external(self, packet:BasePacket):
         # Register that the packet is incoming from outside the net
-        if not self._packet_registry.is_registered(packet):
-            packet = TrackedPacket(packet, location=TrackedPacket.EXTERNAL_LOCATION, packet_registry=self._packet_registry)
-        self._packet_registry.register_move(packet, origin=TrackedPacket.EXTERNAL_LOCATION, dest=self._parent_node.loc_uuid, via=self.id)
-        await self._port._put(packet)
+        if not self.packet_registry.is_registered(packet):
+            packet = TrackedPacket(packet, location=TrackedPacket.EXTERNAL_LOCATION, packet_registry=self.packet_registry)
+        self.packet_registry.register_move(packet, origin=TrackedPacket.EXTERNAL_LOCATION, dest=self.parent_node.loc_uuid, via=self.id)
+        await self._put(packet)
     
     async def _get_to_external(self) -> TrackedPacket:
-        packet = await self._port._get()
+        packet = await self._get()
+        if not self.packet_registry.is_registered(packet):
+            packet = TrackedPacket(packet, location=self.parent_node.loc_uuid, packet_registry=self.packet_registry)
         # Register that the packet is leaving the net
-        if not isinstance(packet, TrackedPacket): raise RuntimeError(f"Got packet '{packet.uuid}' via '{self.id}', that was not of type TrackedPacket.")
-        self._packet_registry.register_move(packet, origin=self._parent_node.loc_uuid, dest=TrackedPacket.EXTERNAL_LOCATION, via=self.id)
+        self.packet_registry.register_move(packet, origin=self.parent_node.loc_uuid, dest=TrackedPacket.EXTERNAL_LOCATION, via=self.id)
         return packet
     
-    async def _put_value_to_external(self, val:Any):
+    async def _put_value_from_external(self, val:Any):
         await self._put_from_external(Packet(val))
         
     async def _get_and_consume_to_external(self) -> Any:
         packet: TrackedPacket = await self._get_to_external()
         return await packet.consume()
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 13
+# %% ../../nbs/api/01_graph/02_net.ipynb 15
 class NodePortCollection(PortCollection):
     def __init__(self, *, _port_collection:PortCollection, _parent_node:Node):
         self._port_spec_collection: PortSpecCollection = _port_collection._port_spec_collection
@@ -210,94 +278,118 @@ class NodePortCollection(PortCollection):
         for port_type in PortType:
             setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortCollection.__name__}.{port_type.label}", dtype=NodePort))
         for port in _port_collection.iter_ports():
-            self._ports[port.id] = node_port = NodePort(_port=port, _parent_node=_parent_node)
-            getattr(self, port.port_type.label)._set(port.name, node_port)
+            self._add_port(NodePort(_port=port, _parent_node=_parent_node))
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 15
-class Node:
-    NET_ID = 'NET'
+# %% ../../nbs/api/01_graph/02_net.ipynb 17
+class BaseNode(ABC):
     _address_delimiter = '->'
     
-    def __init__(self, node_spec: NodeSpec, parent_net:Node|None) -> None:
-        self._loc_uuid:LocationUUID = get_location_uuid(self)
-        self._node_spec:NodeSpec = node_spec
-        self._parent_net:Node = parent_net
-        self._task_manager = TaskManager(self)
-        
-        self._packet_registry: PacketRegistry = None
-        if self._parent_net:
-            self._packet_registry: PacketRegistry = self._parent_net._packet_registry
-        else:
-            self._packet_registry = PacketRegistry()
-            
-        self._component_process = self._node_spec.component_type()
-        self._component_process._task_manager.subscribe(self._handle_component_process_exception)
-        self._ports = NodePortCollection(_port_collection=self._component_process.ports, _parent_node=self)
+    def __init__(self, spec: NodeSpec, parent_net:BaseNode|None) -> None:
+        self._spec:NodeSpec = spec
+        self._parent_net:BaseNode = parent_net
         
         self._states:StateCollection = StateCollection()
         self._states._add_state(StateHandler("started", False), readonly=True)
-        self._states._add_state(StateHandler("terminated", False), readonly=True)
+        self._states._add_state(StateHandler("stopped", False), readonly=True)
         
-        self.__start_lock = asyncio.Lock()
-        self.__terminate_lock = asyncio.Lock()
-    
+        self._loc_uuid:LocationUUID = get_location_uuid(self)
+        self._task_manager = TaskManager(self)
+
     @property
-    def spec(self) -> EdgeSpec: return self._node_spec
+    def spec(self) -> EdgeSpec: return self._spec
     @property
     def id(self) -> str: return self._node_spec.id
     @property
     def states(self): return self._states
     @property
-    def ports(self) -> PortCollection: return self._ports
+    def parent_net(self): return self._parent_net
+    @property
+    @abstractmethod
+    def ports(self) -> PortCollection: ...
     @property
     def port_specs(self) -> PortSpecCollection: return self.component_type.port_specs
     @property
     def loc_uuid(self) -> LocationUUID: return self._loc_uuid
-    
     @property
-    def edge_connections(self) -> MappingProxyType[PortID, Edge]:
-        edges = {port_id : self._parent_graph.edges[edge_id] for port_id, edge_id in self._edge_connections.items()}
-        return MappingProxyType(edges)
-    
+    @abstractmethod
+    def edge_connections(self) -> MappingProxyType[PortID, Edge]: ...
     @property
-    def component_type(self) -> Type[BaseComponent]: return self._node_spec.component_type
+    def component_type(self) -> Type[BaseComponent]: return self.spec.component_type
     @property
     def component_name(self) -> str: return self._node_spec.component_name
     @property
-    def component_process(self) -> BaseComponent: return self._component_process
+    @abstractmethod
+    def component_process(self) -> BaseComponent: ...
+    @property
+    @abstractmethod
+    def packet_registry(self) -> PacketRegistry: ...
+    @property
+    def task_manager(self) -> TaskManager: return self._task_manager
     
-    def _handle_component_process_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
-        try: raise ComponentError() from exception
-        except ComponentError as e:
-            self._task_manager.submit_exception(task, e, source_trace)
-    
-    async def start(self):
-        async with self.__start_lock:
-            if self.states.started.get(): raise RuntimeError("Node is already started.")
-            if self.states.terminated.get(): raise RuntimeError("Cannot start an already terminated node.")
-            self._component_process._parent_net = self
-            await self._component_process.start()
-            self.states._started.set(True)
+    async def start(self): ...
         
-    async def terminate(self):
-        async with self.__terminate_lock:
-            if not self.states.started.get(): raise RuntimeError("Node has not been started yet.")
-            if self.states.terminated.get(): raise RuntimeError("Node is already terminated.")
-            await self._task_manager.destroy()
-            await self.component_process.terminate()
-            self.states._terminated.set(True)
+    async def stop(self): ...
     
     @property
     def address(self) -> Address:
         if self._parent_net:
-            return f"{self._parent_net.address}{Node._address_delimiter}{self.id}"
+            return f"{self._parent_net.address}{BaseNode._address_delimiter}{self.id}"
         else: return 'NET'
         
-    def get_child_by_address(self, address:Address) -> Node|Edge|NodePort:
+    def get_child_by_address(self, address:Address) -> BaseNode|Edge|NodePort:
         from fbdev.graph._utils.node_lookup_by_address import _get_node_child_by_address
         return _get_node_child_by_address(self, address)
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 16
+# %% ../../nbs/api/01_graph/02_net.ipynb 19
+class Node(BaseNode):
+    def __init__(self, node_spec: NodeSpec, parent_net:Node|None) -> None:
+        super().__init__(node_spec, parent_net)
+            
+        self._component_process = self.spec.component_type()
+        self._component_process.task_manager.subscribe(self._handle_component_process_exception)
+        self._ports = NodePortCollection(_port_collection=self._component_process.ports, _parent_node=self)
+        
+        self._packet_registry: PacketRegistry = None
+        if self.parent_net:
+            self._packet_registry: PacketRegistry = self.parent_net._packet_registry
+        else:
+            self._packet_registry = PacketRegistry()
+    
+        self.__start_lock = asyncio.Lock()
+        self.__stop_lock = asyncio.Lock()
+        
+    @property
+    def ports(self) -> PortCollection: return self._ports
+    @property
+    def edge_connections(self) -> MappingProxyType[PortID, Edge]:
+        edges = {port_id : self._parent_graph.edges[edge_id] for port_id, edge_id in self._edge_connections.items()}
+        return MappingProxyType(edges)
+    @property
+    def component_process(self) -> BaseComponent: return self._component_process
+    @property
+    def packet_registry(self) -> PacketRegistry: return self._packet_registry
+    
+    async def start(self):
+        async with self.__start_lock:
+            if self.states.started.get(): raise RuntimeError("Node is already started.")
+            if self.states.stopped.get(): raise RuntimeError("Cannot start an already stopped node.")
+            await self._component_process.start()
+            self.states._started.set(True)
+        
+    async def stop(self):
+        async with self.__stop_lock:
+            if not self.states.started.get(): raise RuntimeError("Node has not been started yet.")
+            if self.states.stopped.get(): raise RuntimeError("Node is already stopped.")
+            await self.task_manager.destroy()
+            await self.component_process.stop()
+            self.states._stopped.set(True)
+            
+    def _handle_component_process_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
+        try: raise ComponentError() from exception
+        except ComponentError as e:
+            self.task_manager.submit_exception(task, e, source_trace)
+
+# %% ../../nbs/api/01_graph/02_net.ipynb 21
 class Net(Node):
     NET_ID = 'NET'
     
@@ -308,7 +400,7 @@ class Net(Node):
     
     @property
     def id(self) -> str:
-        if self._parent_net: self._node_spec.id
+        if self._parent_net: return self.spec.id
         return Node.NET_ID
     @property
     def is_top_net(self) -> bool: return self._parent_net is None
@@ -320,6 +412,10 @@ class Net(Node):
     @property
     def edges(self) -> MappingProxyType[str, Edge]: return self.component_process.edges
     
+    async def start(self):
+        self._component_process._parent_net = self
+        await super().start()
+    
     async def await_message(self, name:str):
         packet: BasePacket = await self.ports.message[name].get()
         await packet.consume()
@@ -330,36 +426,3 @@ class Net(Node):
     def get_node_by_id(self, node_id:str) -> Node|Net:
         if node_id == Net.NET_ID: return self
         else: return self.nodes[node_id]
-        
-    async def exec_coros(self, *coros: List[Coroutine], print_all_exceptions=True):
-        """Run a coroutine and monitor for exceptions in the coroutine, as well as
-        any exceptions that occurs in the task manager. Therefore, for it to work
-        as expected, the coroutine must be starting tasks using self._task_manager.create_task().
-        """
-        results = []
-        async def all_coros():
-            _tasks = [asyncio.create_task(coro) for coro in coros]
-            await asyncio.gather(*_tasks)
-            for task in _tasks: results.append(task.result())
-        task = asyncio.create_task(all_coros())
-        monitor_task = asyncio.create_task(self._task_manager.wait_for_exceptions())
-        await asyncio.wait([task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
-        exceptions = self._task_manager.get_exceptions()
-        if task.done():
-            try: await task
-            except Exception as e: exceptions.append((task, e, ()))
-        if not monitor_task.done():
-            monitor_task.cancel()
-        
-        if print_all_exceptions:
-            for i, (task, e, source_trace) in enumerate(exceptions):
-                msg = f"Message: {e}\n\n{''.join(traceback.format_exception(type(e), e, e.__traceback__))}\n\n"
-                msg = "\n".join([f"    {line}" for line in msg.split("\n")])
-                print(f"Exception {i+1} ({e.__class__.__name__}):")
-                print(msg)
-                
-        for task, e, source_trace in exceptions:
-            raise e
-        
-        if len(results) == 1: return results[0]
-        else: return results
