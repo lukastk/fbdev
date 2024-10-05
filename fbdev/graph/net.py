@@ -12,7 +12,7 @@ import uuid
 import traceback
 
 import fbdev
-from .._utils import AttrContainer, TaskManager, StateCollection, StateHandler, await_multiple_events, EventCollection
+from .._utils import AttrContainer, TaskManager, StateCollection, StateHandler, await_multiple_events, EventCollection, abstractproperty
 from ..comp.packet import BasePacket, Packet
 from ..comp.port import PortType, PortSpec, PortSpecCollection, BasePort, Port, PortCollection, PortID
 from ..comp.base_component import BaseComponent
@@ -156,41 +156,29 @@ class BaseNodePort(BasePort):
     def address(self) -> Address:
         return f"{self._parent_node.address}{BaseNodePort._address_delimiter}{self.port_type}.{self.name}"
 
-    @property
-    @abstractmethod
+    @abstractproperty
     def spec(self) -> PortSpec: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def name(self) -> str: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def id(self) -> str: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def port_type(self) -> PortType: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def dtype(self) -> type: return ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def is_input_port(self) -> bool: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def is_output_port(self) -> bool: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def data_validator(self) -> Callable[[Any], bool]: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def states(self) -> StateCollection: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def events(self) -> EventCollection: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def parent_node(self) -> BaseNode: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def packet_registry(self) -> PacketRegistry: ...
     
     @abstractmethod
@@ -303,25 +291,21 @@ class BaseNode(ABC):
     def states(self): return self._states
     @property
     def parent_net(self): return self._parent_net
-    @property
-    @abstractmethod
+    @abstractproperty
     def ports(self) -> PortCollection: ...
     @property
     def port_specs(self) -> PortSpecCollection: return self.component_type.port_specs
     @property
     def loc_uuid(self) -> LocationUUID: return self._loc_uuid
-    @property
-    @abstractmethod
+    @abstractproperty
     def edge_connections(self) -> MappingProxyType[PortID, Edge]: ...
     @property
     def component_type(self) -> Type[BaseComponent]: return self.spec.component_type
     @property
     def component_name(self) -> str: return self._node_spec.component_name
-    @property
-    @abstractmethod
+    @abstractproperty
     def component_process(self) -> BaseComponent: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def packet_registry(self) -> PacketRegistry: ...
     @property
     def task_manager(self) -> TaskManager: return self._task_manager

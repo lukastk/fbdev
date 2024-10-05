@@ -11,7 +11,7 @@ from abc import ABC, abstractmethod
 import uuid
 
 import fbdev
-from .._utils import SingletonMeta
+from .._utils import SingletonMeta, abstractproperty
 
 # %% auto 0
 __all__ = ['PacketUUID', 'BasePacket', 'Packet']
@@ -24,17 +24,13 @@ class BasePacket(ABC):
     @property
     def is_empty(self): return self._dtype == 'EmptyPayload'
     
-    @property
-    @abstractmethod
+    @abstractproperty
     def uuid(self) -> PacketUUID: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def creation_timestamp(self) -> datetime: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def dtype(self) -> Type: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def is_consumed(self) -> bool: ...
     
     @abstractmethod

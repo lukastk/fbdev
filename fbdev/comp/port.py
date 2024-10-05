@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 
 import fbdev
 from .packet import BasePacket, Packet
-from .._utils import SingletonMeta, AttrContainer, StateHandler, StateCollection, is_valid_name, EventCollection, EventHandler
+from .._utils import SingletonMeta, AttrContainer, StateHandler, StateCollection, is_valid_name, EventCollection, EventHandler, abstractproperty
 
 # %% auto 0
 __all__ = ['PortID', 'PortType', 'PortSpec', 'PortSpecCollection', 'BasePort', 'Port', 'PortCollection']
@@ -214,35 +214,25 @@ class PortSpecCollection:
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 14
 class BasePort(ABC):
-    @property
-    @abstractmethod
+    @abstractproperty
     def spec(self) -> PortSpec: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def name(self) -> str: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def id(self) -> str: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def port_type(self) -> PortType: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def dtype(self) -> type: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def is_input_port(self) -> bool: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def is_output_port(self) -> bool: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def data_validator(self) -> Callable[[Any], bool]: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def states(self) -> StateCollection: ...
-    @property
-    @abstractmethod
+    @abstractproperty
     def events(self) -> EventCollection: ...
         
     @abstractmethod
