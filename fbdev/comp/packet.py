@@ -17,7 +17,7 @@ from .._utils import SingletonMeta, abstractproperty
 __all__ = ['PacketUUID', 'BasePacket', 'Packet']
 
 # %% ../../nbs/api/00_comp/00_packet.ipynb 5
-PacketUUID = int
+PacketUUID = str
 
 # %% ../../nbs/api/00_comp/00_packet.ipynb 7
 class BasePacket(ABC):
@@ -46,7 +46,7 @@ class BasePacket(ABC):
 # %% ../../nbs/api/00_comp/00_packet.ipynb 9
 class Packet(BasePacket):
     def __init__(self, data:Any):
-        self._uuid:PacketUUID = uuid.uuid4().int
+        self._uuid:PacketUUID = uuid.uuid4().hex
         self._creation_timestamp:datetime = datetime.now(timezone.utc)
         self._data:Any = data
         self._dtype:type = type(data)

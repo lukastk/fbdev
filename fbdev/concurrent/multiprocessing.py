@@ -105,7 +105,7 @@ class AsyncRemoteController:
     async def do(self, routine_key:Hashable, *args, **kwargs):
         if routine_key not in self._remote_routines:
             raise ValueError(f"Command '{routine_key}' is not a remote routine.")
-        comm_id = uuid.uuid4().int
+        comm_id = uuid.uuid4().hex
         self._send_tickets[comm_id] = asyncio.Queue()
         self._conn.send((self.CommMessages.DO, comm_id, routine_key, args, kwargs, None))
         return_val = await self._send_tickets[comm_id].get()
@@ -168,8 +168,6 @@ class ProxyPort(BaseNodePort):
                 'parent_put',
                 'parent_get',
             })
-        self._awaiting_puts:Dict[int, asyncio.Event] = {}
-        self._awaiting_gets:Dict[int, asyncio.Queue] = {}
         
         self._states = StateCollection()
         self._states._add_state(StateHandler("is_blocked", False)) # If input port, it's blocked if the component is currently getting. If output port, it's blocked if the component is currently putting.
@@ -182,7 +180,6 @@ class ProxyPort(BaseNodePort):
         self._events._add_event(EventHandler("get_requested"))
         self._events._add_event(EventHandler("get_fulfilled"))
         
-        self._packet_queue = asyncio.Queue(maxsize=1)
         self._num_waiting_gets = 0
         self._num_waiting_puts = 0
         

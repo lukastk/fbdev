@@ -31,7 +31,7 @@ Address = NewType('Address', str)
 location_uuid_entitities: Dict[LocationUUID, Edge|Node] = {}
 
 def get_location_uuid(entity) -> LocationUUID:
-    uuid_int = uuid.uuid4().int
+    uuid_int = uuid.uuid4().hex
     location_uuid_entitities[uuid_int] = entity
     
 def lookup_location_uuid(uuid_int:LocationUUID) -> Edge|Node:

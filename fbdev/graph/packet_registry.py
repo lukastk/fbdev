@@ -15,7 +15,7 @@ from ..comp.port import PortType,  PortID
 __all__ = ['LocationUUID', 'PacketActivity', 'PacketCreation', 'PacketConsumption', 'PacketMovement', 'PacketRegistry']
 
 # %% ../../nbs/api/01_graph/01_packet_registry.ipynb 5
-LocationUUID = int
+LocationUUID = str
 
 # %% ../../nbs/api/01_graph/01_packet_registry.ipynb 7
 class TrackedPacket(BasePacket):

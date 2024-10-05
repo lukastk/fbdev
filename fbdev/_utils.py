@@ -16,6 +16,8 @@ from pathlib import Path
 import subprocess
 import os, sys
 import importlib.util
+import socket
+import random
 from abc import ABC, abstractmethod
 
 import fbdev
@@ -24,7 +26,7 @@ import fbdev
 __all__ = ['is_valid_name', 'is_mutually_exclusive', 'is_in_event_loop', 'await_multiple_events', 'await_any_event',
            'AttrContainer', 'ReadonlyEvent', 'EventHandler', 'EventCollection', 'StateHandler', 'StateView',
            'StateCollection', 'TaskManager', 'get_git_root_directory', 'root_dir', 'extract_top_level_docstring',
-           'get_function_from_py_file', 'SingletonMeta', 'abstractproperty']
+           'get_function_from_py_file', 'SingletonMeta', 'abstractproperty', 'find_available_port']
 
 # %% ../nbs/api/utils.ipynb 5
 def is_valid_name(name: str) -> bool:
@@ -195,20 +197,23 @@ class EventCollection(AttrContainer):
 # %% ../nbs/api/utils.ipynb 26
 class StateHandler:
     def __init__(self, name, current_state, state_vals=[True, False]):
-        self.name = name
+        self._name = name
         state_vals = list(state_vals) # Can be enums
         self._state_vals = state_vals
         if len(state_vals) != len(set(state_vals)): raise ValueError("`state_vals` must have all unique elements.")
         if current_state not in state_vals: raise ValueError("`current_state` must be in `state_vals`.")
-        self.__state_is_on = {state : asyncio.Event() for state in state_vals}
-        self.__state_is_on[current_state].set()
-        self.__state_is_off = {state : asyncio.Event() for state in state_vals}
+        self._state_is_on = {state : asyncio.Event() for state in state_vals}
+        self._state_is_on[current_state].set()
+        self._state_is_off = {state : asyncio.Event() for state in state_vals}
         self._current_state = current_state
-        for state in self.__state_is_off:
-            if state != current_state: self.__state_is_off[state].set()
+        for state in self._state_is_off:
+            if state != current_state: self._state_is_off[state].set()
+        
+    @property
+    def name(self) -> str: return self._name
         
     def check(self, state):
-        return self.__state_is_on[state].is_set()
+        return self._state_is_on[state].is_set()
     
     def get(self):
         return self._current_state
@@ -216,31 +221,34 @@ class StateHandler:
     def set(self, state):
         if state not in self._state_vals: raise ValueError(f"Invalid state: {state}. Possible states: {', '.join(self._state_vals)}")
         self._current_state = state
-        for _state in self.__state_is_on:
+        for _state in self._state_is_on:
             if _state == state:
-                self.__state_is_on[_state].set()
-                self.__state_is_off[_state].clear()
+                self._state_is_on[_state].set()
+                self._state_is_off[_state].clear()
             else:
-                self.__state_is_on[_state].clear()
-                self.__state_is_off[_state].set()
+                self._state_is_on[_state].clear()
+                self._state_is_off[_state].set()
             
     def wait(self, state, target_value=True):
-        if target_value: return self.__state_is_on[state].wait()
-        else: return self.__state_is_off[state].wait()
+        if target_value: return self._state_is_on[state].wait()
+        else: return self._state_is_off[state].wait()
         
-    async def __event_func(self, state, event):
+    async def _event_func(self, state, event):
         await state.wait()
         event.set()
       
     def get_state_event(self, state, target_value=True):
-        if target_value: return ReadonlyEvent(self.__state_is_on[state])
-        else: return ReadonlyEvent(self.__state_is_off[state])
+        if target_value: return ReadonlyEvent(self._state_is_on[state])
+        else: return ReadonlyEvent(self._state_is_off[state])
         
     def get_state_toggle_event(self, state, target_value=True):
         event = asyncio.Event()
-        if target_value: asyncio.create_task(self.__event_func(self.__state_is_on[state], event))
-        else: asyncio.create_task(self.__event_func(self.__state_is_off[state], event))
+        if target_value: asyncio.create_task(self._event_func(self._state_is_on[state], event))
+        else: asyncio.create_task(self._event_func(self._state_is_off[state], event))
         return event
+    
+    def get_state_changed_event(self):
+        return self.get_state_toggle_event(self._current_state, target_value=False)
     
     def __str__(self):
         return f"State {self.name}: {self._current_state}"
@@ -252,6 +260,9 @@ class StateHandler:
 class StateView:
     def __init__(self, state_handler):
         self._state_handler: StateHandler = state_handler
+        
+    @property
+    def name(self) -> str: return self._state_handler.name
         
     def check(self, state):
         return self._state_handler.check(state)
@@ -568,3 +579,14 @@ class SingletonMeta(type):
 # %% ../nbs/api/utils.ipynb 56
 def abstractproperty(func):
     return property(abstractmethod(func))
+
+# %% ../nbs/api/utils.ipynb 58
+def find_available_port():
+    while True:
+        port = random.randint(49152, 65535)
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind(('localhost', port))
+                return port
+            except OSError:
+                continue
