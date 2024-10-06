@@ -42,7 +42,7 @@ class EdgeSpec:
     def tail(self) -> NodeSpec|GraphSpec|None:
         if self._parent_graph is None: raise ValueError("Edge does not have a parent graph.")
         elif self._tail_node_id is not None: 
-            return self._parent_graph.get_node_by_id(self._tail_node_id)
+            return self._parent_graph.get_child_node_by_id(self._tail_node_id)
         else: return None
     @property
     def tail_port(self) -> NodePortSpec|None:
@@ -51,7 +51,7 @@ class EdgeSpec:
     def head(self) -> NodeSpec|GraphSpec|None:
         if self._parent_graph is None: raise ValueError("Edge does not have a parent graph.")
         elif self._head_node_id is not None: 
-            return self._parent_graph.get_node_by_id(self._head_node_id)
+            return self._parent_graph.get_child_node_by_id(self._head_node_id)
         else: return None
     @property
     def head_port(self) -> NodePortSpec|None:
@@ -248,7 +248,8 @@ class NodeSpec:
 class GraphSpec:
     GRAPH_ID = 'GRAPH'
     
-    def __init__(self, port_spec_collection:PortSpecCollection, inherit_base_component_ports=True):
+    def __init__(self, port_spec_collection:PortSpecCollection=None, inherit_base_component_ports=True):
+        if port_spec_collection is None: port_spec_collection = PortSpecCollection()
         self._readonly:bool = False
         self._nodes: Dict[str, NodeSpec] = {}
         self._edges: Dict[str, EdgeSpec] = {}
@@ -294,7 +295,7 @@ class GraphSpec:
                 graph_port = self.add_graph_port(PortSpec(port_type, port_name))
                 graph_port.connect_to(node.ports[port_id])
     
-    def get_node_by_id(self, node_id:str) -> NodeSpec:
+    def get_child_node_by_id(self, node_id:str) -> NodeSpec:
         if node_id == GraphSpec.GRAPH_ID: return self
         else: return self._nodes[node_id]
     
@@ -381,7 +382,7 @@ class GraphSpec:
             self.__remove_edge_helper(edge._head_node_id)
         
     def __remove_edge_helper(self, edge:EdgeSpec, node_id:str):
-        node = self.get_node_by_id(node_id)
+        node = self.get_child_node_by_id(node_id)
         for (port_type, port_name), edge_id in node._edge_connections.items():
             if edge_id == edge.id:
                 found_match = True
@@ -397,7 +398,7 @@ class GraphSpec:
         elif type(node) == GraphSpec:
             pass
         elif type(node) == str:
-            node = self.get_node_by_id(node)
+            node = self.get_child_node_by_id(node)
         else:
             raise TypeError(f"Argument `node` of incorrect type. Got '{type(node)}'.")
         return node
@@ -421,7 +422,7 @@ class GraphSpec:
             graph.add_edge(edge.maxsize, id=edge.id)
         for node in self._nodes.values():
             for port_id, edge in node.edge_connections.items():
-                _node_port = graph.get_node_by_id(node.id).ports[port_id]
+                _node_port = graph.get_child_node_by_id(node.id).ports[port_id]
                 _edge = graph.edges[edge.id]
                 graph.connect_port_to_edge(_node_port, _edge)
         for port_id, edge_id in self._edge_connections.items():

@@ -16,37 +16,37 @@ from ..comp.port import PortType, PortSpec, PortSpecCollection, PortID
 from ..comp.base_component import BaseComponent
 from ..graph.graph_spec import GraphSpec, NodeSpec
 from ..graph.packet_registry import TrackedPacket
-from ..graph.net import Edge, Node, Net
+from ..graph.net import Edge, Node, BaseNode
 from ..graph.graph_component import GraphComponentFactory
-from . import BaseNetRuntime
+from . import BaseRuntime
 from ._utils import parse_args_into_port_packets, setup_packet_senders_and_receivers
 
 # %% auto 0
 __all__ = ['BatchExecutor']
 
 # %% ../../nbs/api/02_runtime/01_batch_executor.ipynb 6
-class BatchExecutor(BaseNetRuntime):
+class BatchExecutor(BaseRuntime):
     """Executes a net like a batch process (input fed in the beginning, and no input during the execution, and output is returned at the end)."""
-    def __init__(self, net:Net):
+    def __init__(self, node:BaseNode):
         super().__init__()
-        self._net:Net = net
+        self._node:BaseNode = node
     
     def _setup_execution(self, *args, config_vals={}, signals=set(), ports_to_get=None, **kwargs):
-        if self._net.states.started.get(): raise RuntimeError("Net has already started.")
-        if self._net.states.stopped.get(): raise RuntimeError("Cannot run stopped Net.")
+        if self._node.states.started.get(): raise RuntimeError("Node has already started.")
+        if self._node.states.stopped.get(): raise RuntimeError("Cannot run stopped node.")
         
         if ports_to_get is None:
-            ports_to_get = [port.id for port in self._net.ports.output.values()]
+            ports_to_get = [port.id for port in self._node.ports.output.values()]
         
-        input_vals, config_vals, signals = parse_args_into_port_packets(self._net.port_specs, config_vals, signals, *args, **kwargs)
+        input_vals, config_vals, signals = parse_args_into_port_packets(self._node.port_specs, config_vals, signals, *args, **kwargs)
         
         output_vals, message_vals, input_senders, config_senders, output_receivers, message_receivers = \
-            setup_packet_senders_and_receivers(self._net.ports, input_vals, config_vals, ports_to_get, *args, **kwargs)
+            setup_packet_senders_and_receivers(self._node.ports, input_vals, config_vals, ports_to_get, *args, **kwargs)
         
         async def main():
-            await self._net.start()
-            await self._net.task_manager.exec_coros(*input_senders, *config_senders, *output_receivers, *message_receivers)
-            await self._net.task_manager.exec_coros(self._net.stop())
+            await self._node.start()
+            await self._node.task_manager.exec_coros(*input_senders, *config_senders, *output_receivers, *message_receivers)
+            await self._node.task_manager.exec_coros(self._node.stop())
             
         return main(), output_vals
 
@@ -67,7 +67,7 @@ class BatchExecutor(BaseNetRuntime):
     
     async def stop(self):
         await super().stop()
-        if not self._net.states.stopped.get():
-            if not self._net.states.stopped.get():
-                await self._net.task_manager.exec_coros(self._net.stop())
+        if not self._node.states.stopped.get():
+            if not self._node.states.stopped.get():
+                await self._node.task_manager.exec_coros(self._node.stop())
         self._stopped = True

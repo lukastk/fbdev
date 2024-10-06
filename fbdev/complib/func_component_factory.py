@@ -107,5 +107,7 @@ class FunctionComponentFactory(ExecComponent):
 # %% ../../nbs/api/03_complib/01_func_component_factory.ipynb 8
 def func_component(name=None, **component_options):
     def decorator(func):
-        return FunctionComponentFactory.get_component(func, name, component_options)
+        component_class = FunctionComponentFactory.get_component(func, name, component_options)
+        component_class.__module__ = func.__module__
+        return component_class
     return decorator

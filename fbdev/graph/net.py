@@ -22,7 +22,7 @@ from .packet_registry import TrackedPacket, PacketRegistry
 from ..exceptions import ComponentError
 
 # %% auto 0
-__all__ = ['Address', 'Edge', 'BaseNodePort', 'NodePortCollection', 'BaseNode', 'Node', 'Net']
+__all__ = ['Address', 'Edge', 'BaseNodePort', 'NodePortCollection', 'BaseNode', 'Node']
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 5
 Address = NewType('Address', str)
@@ -41,10 +41,10 @@ def lookup_location_uuid(uuid_int:LocationUUID) -> Edge|Node:
 class Edge:
     _address_delimiter = '|'
 
-    def __init__(self, edge_spec: EdgeSpec, parent_net:Net) -> None:
+    def __init__(self, edge_spec: EdgeSpec, parent_graph_comp_process:fbdev.graph.graph_component.GraphComponentFactory) -> None:
         self._edge_spec = edge_spec
         self._loc_uuid:LocationUUID = get_location_uuid(self)
-        self._parent_net: Net = parent_net
+        self._parent_graph_comp_process: fbdev.graph.graph_component.GraphComponentFactory = parent_graph_comp_process
         self._task_manager = TaskManager(self)
         self._edge_in_bus_task: asyncio.Task = None
         self._edge_out_bus_task: asyncio.Task = None
@@ -69,29 +69,43 @@ class Edge:
     @property
     def _packet_registry(self): return self._parent_net._packet_registry
     
+    @property
+    def _parent_net(self) -> BaseNode:
+        if hasattr(self._parent_graph_comp_process, '_parent_node'):
+            return self._parent_graph_comp_process._parent_node
+        else: return None
     
     @property
-    def tail(self) -> Node:
+    def tail(self) -> BaseNode:
+        if self._parent_net is None: raise RuntimeError("Cannot use Edge.tail when its GraphComponent process does not have a parent node.")
         if self._edge_spec.tail:
-            node_id = Net.NET_ID if type(self._edge_spec.tail) == GraphSpec else self._edge_spec.tail.id
-            return self._parent_net.get_node_by_id(node_id)
+            node_id = BaseNode.TOP_NODE_ID if type(self._edge_spec.tail) == GraphSpec else self._edge_spec.tail.id
+            return self._parent_net.get_child_node_by_id(node_id)
         else: return None
     @property
     def tail_port(self) -> NodePort:
-        if self.tail:
-            return self.tail.ports[self._edge_spec._tail_node_port_id]
+        if self.tail_is_connected:
+            tail = self._parent_graph_comp_process if type(self._edge_spec.tail) == GraphSpec else self._parent_graph_comp_process.nodes[self._edge_spec.tail.id]
+            return tail.ports[self._edge_spec._tail_node_port_id]
         else: return None
+        
+    @property
+    def tail_is_connected(self) -> bool: return self.tail is not None
+    @property
+    def head_is_connected(self) -> bool: return self.head is not None
     
     @property
-    def head(self) -> Node:
+    def head(self) -> BaseNode:
+        if self._parent_net is None: raise RuntimeError("Cannot use Edge.head when its GraphComponent process does not have a parent node.")
         if self._edge_spec.head:
-            node_id = Net.NET_ID if type(self._edge_spec.head) == GraphSpec else self._edge_spec.head.id
-            return self._parent_net.get_node_by_id(node_id)
+            node_id = BaseNode.TOP_NODE_ID if type(self._edge_spec.head) == GraphSpec else self._edge_spec.head.id
+            return self._parent_net.get_child_node_by_id(node_id)
         else: return None
     @property
     def head_port(self) -> NodePort:
-        if self.head:
-            return self.head.ports[self._edge_spec._head_node_port_id]
+        if self.head_is_connected:
+            head = self._parent_graph_comp_process if type(self._edge_spec.head) == GraphSpec else self._parent_graph_comp_process.nodes[self._edge_spec.head.id]
+            return head.ports[self._edge_spec._head_node_port_id]
         else: return None
         
     def start(self):
@@ -104,7 +118,7 @@ class Edge:
 
     async def _edge_in_bus(self):
         packet = None
-        if self.tail is None: return # TODO: Allow for attaching the tail and head after creation
+        if not self.tail_is_connected: return # TODO: Allow for attaching the tail and head after creation
         while True:
             packet_putted = self.tail_port.states.put_awaiting.get_state_event(True)
             edge_non_full = self.states.full.get_state_event(False)
@@ -120,7 +134,7 @@ class Edge:
 
     async def _edge_out_bus(self):
         packet = None
-        if self.head is None: return
+        if not self.head_is_connected: return
         while True:
             packet_getted = self.head_port.states.get_awaiting.get_state_event(True)
             edge_non_empty = self.states.empty.get_state_event(False)
@@ -199,14 +213,14 @@ class NodePort(BaseNodePort):
     """Ports in a Node will be converted to NodePorts. This is to facilitate addressing. It's mostly cosmetics."""
     _address_delimiter = ':'
     
-    def __init__(self, *, _port:Port, _parent_node: Net):
+    def __init__(self, *, _port:Port, _parent_node: BaseNode):
         self._port = _port
-        self._parent_node: Net = _parent_node
+        self._parent_node: BaseNode = _parent_node
         super().__init__()
     
     @property
     def address(self) -> Address:
-        return f"{self._parent_node.address}{NodePort._address_delimiter}{self.port_type}.{self.name}"
+        return f"{self.parent_node.address}{NodePort._address_delimiter}{self.port_type}.{self.name}"
 
     @property
     def spec(self) -> PortSpec: return self._port.spec
@@ -231,7 +245,7 @@ class NodePort(BaseNodePort):
     @property
     def parent_node(self) -> BaseNode: return self._parent_node
     @property
-    def packet_registry(self) -> PacketRegistry: return self._parent_node._packet_registry
+    def packet_registry(self) -> PacketRegistry: return self.parent_node._packet_registry
         
     async def _put(self, packet:BasePacket): await self._port._put(packet)
     async def _get(self) -> TrackedPacket: return await self._port._get()
@@ -260,7 +274,7 @@ class NodePort(BaseNodePort):
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 15
 class NodePortCollection(PortCollection):
-    def __init__(self, *, _port_collection:PortCollection, _parent_node:Node):
+    def __init__(self, *, _port_collection:PortCollection, _parent_node:BaseNode):
         self._port_spec_collection: PortSpecCollection = _port_collection._port_spec_collection
         self._ports: Dict[str, NodePort] = {}
         for port_type in PortType:
@@ -270,10 +284,13 @@ class NodePortCollection(PortCollection):
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 17
 class BaseNode(ABC):
+    TOP_NODE_ID = 'TOP'
     _address_delimiter = '->'
     
     def __init__(self, spec: NodeSpec, parent_net:BaseNode|None) -> None:
         self._spec:NodeSpec = spec
+        if parent_net and not parent_net.is_net:
+            raise ValueError("Node parent must be a net.")
         self._parent_net:BaseNode = parent_net
         
         self._states:StateCollection = StateCollection()
@@ -286,7 +303,14 @@ class BaseNode(ABC):
     @property
     def spec(self) -> EdgeSpec: return self._spec
     @property
-    def id(self) -> str: return self._node_spec.id
+    def id(self) -> str:
+        if self.parent_net: return self.spec.id
+        return BaseNode.TOP_NODE_ID
+    @property
+    def is_net(self) -> bool:
+        return issubclass(self.spec.component_type, fbdev.graph.graph_component.GraphComponentFactory) and self.spec.component_type.expose_graph
+    @property
+    def is_top_node(self) -> bool: return self.parent_net is None
     @property
     def states(self): return self._states
     @property
@@ -302,7 +326,7 @@ class BaseNode(ABC):
     @property
     def component_type(self) -> Type[BaseComponent]: return self.spec.component_type
     @property
-    def component_name(self) -> str: return self._node_spec.component_name
+    def component_name(self) -> str: return self.spec.component_name
     @abstractproperty
     def component_process(self) -> BaseComponent: ...
     @abstractproperty
@@ -310,26 +334,50 @@ class BaseNode(ABC):
     @property
     def task_manager(self) -> TaskManager: return self._task_manager
     
+    @property
+    def nodes(self) -> MappingProxyType[str, BaseNode]:
+        if not self.is_net: raise RuntimeError("Node is not a net.")
+        return self.component_process.nodes
+    @property
+    def edges(self) -> MappingProxyType[str, Edge]:
+        if not self.is_net: raise RuntimeError("Node is not a net.")
+        return self.component_process.edges
+    
+    @abstractmethod
     async def start(self): ...
         
+    @abstractmethod
     async def stop(self): ...
     
     @property
     def address(self) -> Address:
-        if self._parent_net:
-            return f"{self._parent_net.address}{BaseNode._address_delimiter}{self.id}"
-        else: return 'NET'
+        if self.parent_net:
+            return f"{self.parent_net.address}{BaseNode._address_delimiter}{self.id}"
+        else: return self.TOP_NODE_ID
         
     def get_child_by_address(self, address:Address) -> BaseNode|Edge|NodePort:
         from fbdev.graph._utils.node_lookup_by_address import _get_node_child_by_address
         return _get_node_child_by_address(self, address)
+    
+    def get_child_node_by_id(self, node_id:str) -> BaseNode:
+        
+        if node_id == BaseNode.TOP_NODE_ID: return self
+        else: return self.nodes[node_id]
+    
+    async def await_message(self, name:str):
+        packet: BasePacket = await self.ports.message[name].get()
+        await packet.consume()
+        
+    async def send_signal(self, name:str):
+        await self.ports.signal[name].put(Packet.get_empty())
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 19
 class Node(BaseNode):
-    def __init__(self, node_spec: NodeSpec, parent_net:Node|None) -> None:
+    def __init__(self, node_spec: NodeSpec, parent_net:Node|None=None) -> None:
         super().__init__(node_spec, parent_net)
             
         self._component_process = self.spec.component_type()
+        self._component_process._parent_node = self
         self._component_process.task_manager.subscribe(self._handle_component_process_exception)
         self._ports = NodePortCollection(_port_collection=self._component_process.ports, _parent_node=self)
         
@@ -368,45 +416,7 @@ class Node(BaseNode):
             await self.component_process.stop()
             self.states._stopped.set(True)
             
-    def _handle_component_process_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
-        try: raise ComponentError() from exception
+    def _handle_component_process_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+        try: raise ComponentError() from exceptions[0]
         except ComponentError as e:
-            self.task_manager.submit_exception(task, e, source_trace)
-
-# %% ../../nbs/api/01_graph/02_net.ipynb 21
-class Net(Node):
-    NET_ID = 'NET'
-    
-    def __init__(self, node_spec: NodeSpec, parent_net:Node|None=None) -> None:
-        if not issubclass(node_spec.component_type, fbdev.graph.graph_component.GraphComponentFactory):
-            raise ValueError(f"Net must have a component type that descends from GraphComponentFactory.")
-        super().__init__(node_spec, parent_net=parent_net)
-    
-    @property
-    def id(self) -> str:
-        if self._parent_net: return self.spec.id
-        return Node.NET_ID
-    @property
-    def is_top_net(self) -> bool: return self._parent_net is None
-    @property
-    def is_subnet(self) -> bool: return not self.is_top_net
-    
-    @property
-    def nodes(self) -> MappingProxyType[str, Node]: return self.component_process.nodes
-    @property
-    def edges(self) -> MappingProxyType[str, Edge]: return self.component_process.edges
-    
-    async def start(self):
-        self._component_process._parent_net = self
-        await super().start()
-    
-    async def await_message(self, name:str):
-        packet: BasePacket = await self.ports.message[name].get()
-        await packet.consume()
-        
-    async def send_signal(self, name:str):
-        await self.ports.signal[name].put(Packet.get_empty())
-    
-    def get_node_by_id(self, node_id:str) -> Node|Net:
-        if node_id == Net.NET_ID: return self
-        else: return self.nodes[node_id]
+            self.task_manager.submit_exception(task, exceptions + (e,), source_trace)

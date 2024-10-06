@@ -66,6 +66,7 @@ async def main():
         await remote.await_ready()
         await proxy_port.await_initialised()
         
+        await proxy_port.states.get_awaiting.wait(True)
         await proxy_port._put(Packet('Hello from parent!'))
         data = await proxy_port._get_and_consume()
         assert data == 'Hello from child!'

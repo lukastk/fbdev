@@ -9,7 +9,7 @@ from fastcore.basics import patch_to
 
 import fbdev
 from ...comp.port import PortType
-from ..net import Address, BaseNode, Node, Net, NodePort, Edge, BaseNodePort
+from ..net import Address, BaseNode, NodePort, Edge, BaseNodePort
 
 # %% auto 0
 __all__ = []
@@ -38,15 +38,14 @@ def _get_node_child_by_address(node:Node|Net, address:Address) -> Node|Edge|Node
     
     if not child_id: return node
     else:
-        if child_type == Node:
-            if type(node) == Net:
-                return node.nodes[child_id].get_child_by_address(rest_of_address_after_child)
-            else:
+        if issubclass(child_type, BaseNode):
+            if not node.is_net:
                 raise ValueError(f"Poorly formatted address '{address}'. Non-net cannot have child nodes.")
-        elif child_type == Edge:
+            return node.nodes[child_id].get_child_by_address(rest_of_address_after_child)
+        elif issubclass(child_type, Edge):
             if not rest_of_address_after_child: raise ValueError(f"Poorly formatted address '{address}'")
             return node.edges[child_id]
-        elif child_type == NodePort:
+        elif issubclass(child_type, BaseNodePort):
             if not rest_of_address_after_child: raise ValueError(f"Poorly formatted address '{address}'")
             port_type_label, port_name = child_id.split('.')
             port_type = PortType.get(port_type_label)

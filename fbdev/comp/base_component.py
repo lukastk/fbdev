@@ -10,7 +10,7 @@ from typing import Type, Any
 from inspect import signature
 
 import fbdev
-from .._utils import AttrContainer, TaskManager
+from .._utils import AttrContainer, TaskManager, get_caller_module
 from .packet import BasePacket, Packet
 from .port import PortType, PortSpec, PortSpecCollection, Port, PortCollection, PortID
 
@@ -113,7 +113,11 @@ class BaseComponent(ABC):
         else: self.task_manager.create_task(self.ports.message[name].put(Packet.get_empty()))
     
     @classmethod
-    def _create_component_class(cls, component_name=None, class_attrs={}, init_args=[], init_kwargs={}) -> Type[BaseComponent]:
+    def _create_component_class(cls,
+                                component_name=None,
+                                class_attrs={},
+                                init_args=[],
+                                init_kwargs={}) -> Type[BaseComponent]:
         if not cls.is_factory:
             raise ValueError(f"{cls.__name__} is not a component factory.")
         if component_name is None:
@@ -121,12 +125,14 @@ class BaseComponent(ABC):
                 component_name = cls.__name__[:-len("Factory")]
             else:
                 component_name = cls.__name__
-        return type(component_name, (cls,), {
+        comp_class_attrs = {
             '__init__': lambda self: cls.__init__(self, *init_args, **init_kwargs),
             'parent_factory' : cls,
             **class_attrs,
             'is_factory' : False,
-        })
+        }
+        return type(component_name, (cls,), comp_class_attrs)
+
 
     @classmethod
     def create_component(cls, component_name=None) -> Type[BaseComponent]:
@@ -134,3 +140,10 @@ class BaseComponent(ABC):
         Overload to modify the behaviour (for example, to allow modification of `port_spec`)
         """
         raise NotImplementedError()
+    
+    @classmethod
+    def set_module(cls, module_import_path=None):
+        if module_import_path is None:
+            module_import_path = get_caller_module(level=2)
+        
+        cls.__module__ = module_import_path

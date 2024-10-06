@@ -10,18 +10,17 @@ from types import MappingProxyType
 from typing import Type, Tuple, Dict
 
 import fbdev
-from ..comp.packet import BasePacket, Packet
 from ..comp.port import PortType, PortSpec, PortSpecCollection, PortID
 from ..comp.base_component import BaseComponent
 from .graph_spec import GraphSpec, NodeSpec
-from .packet_registry import TrackedPacket, PacketRegistry
-from .net import Edge, Node, Net
+from .packet_registry import PacketRegistry
+from .net import Edge, BaseNode
 from ..exceptions import NodeError, EdgeError
 
 # %% auto 0
 __all__ = ['GraphComponentFactory']
 
-# %% ../../nbs/api/01_graph/03_graph_component.ipynb 6
+# %% ../../nbs/api/01_graph/03_graph_component.ipynb 7
 class GraphComponentFactory(BaseComponent, inherit_ports=False):
     is_factory = True
     expose_graph = True
@@ -31,7 +30,7 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
     
     def __init__(self):
         super().__init__()
-        self._parent_net: Net = None # Is set by Net in Net.start()
+        self._parent_node: BaseNode = None # Must be set by its node in BaseNode.start()
         self._nodes: Dict[str, Node] = {}
         self._edges: Dict[str, Edge] = {}
             
@@ -43,13 +42,13 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
     @property
     def _packet_registry(self) -> PacketRegistry: return self._parent_net._packet_registry
     
-    def _handle_node_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
-        try: raise NodeError() from exception
-        except NodeError as e: self.task_manager.submit_exception(task, e, source_trace)
+    def _handle_node_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+        try: raise NodeError() from exceptions[0]
+        except NodeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace)
     
-    def _handle_edge_exception(self, task:asyncio.Task, exception:Exception, source_trace:Tuple):
-        try: raise EdgeError() from exception
-        except EdgeError as e: self.task_manager.submit_exception(task, e, source_trace)
+    def _handle_edge_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+        try: raise EdgeError() from exceptions[0]
+        except EdgeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace)
     
     @classmethod
     def create_component(cls, graph, expose_graph=True) -> Type[BaseComponent]:
@@ -63,10 +62,10 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
         
     async def _post_start(self):
         for node_spec in self.graph.nodes.values():
-            self._nodes[node_spec.id] = node_spec.create_node(self._parent_net)
+            self._nodes[node_spec.id] = node_spec.create_node(self._parent_node)
             self._nodes[node_spec.id].task_manager.subscribe(self._handle_node_exception)
         for edge_spec in self.graph.edges.values():
-            self._edges[edge_spec.id] = Edge(edge_spec, self._parent_net)
+            self._edges[edge_spec.id] = Edge(edge_spec, self)
             self._edges[edge_spec.id].task_manager.subscribe(self._handle_edge_exception)
         
         for node in self._nodes.values():

@@ -5,11 +5,6 @@
 # %% ../../nbs/api/utils/misc.ipynb 4
 from __future__ import annotations
 import asyncio
-from typing import Optional, Type, Union, Coroutine, List, Callable, Any, Tuple
-from types import MappingProxyType
-import copy
-import traceback
-import inspect
 import re, keyword
 import ast
 from pathlib import Path
@@ -18,6 +13,7 @@ import os, sys
 import importlib.util
 import socket
 import random
+import inspect
 from abc import ABC, abstractmethod
 
 import fbdev
@@ -25,7 +21,7 @@ import fbdev
 # %% auto 0
 __all__ = ['is_valid_name', 'is_mutually_exclusive', 'is_in_event_loop', 'get_git_root_directory', 'root_dir',
            'extract_top_level_docstring', 'find_module_root', 'get_module_path_hierarchy', 'get_function_from_py_file',
-           'SingletonMeta', 'abstractproperty', 'find_available_port']
+           'SingletonMeta', 'abstractproperty', 'find_available_port', 'get_caller_module']
 
 # %% ../../nbs/api/utils/misc.ipynb 5
 def is_valid_name(name: str) -> bool:
@@ -208,3 +204,11 @@ def find_available_port():
                 return port
             except OSError:
                 continue
+
+# %% ../../nbs/api/utils/misc.ipynb 41
+def get_caller_module(level=0) -> str:
+    """Gets the `__module__` of the caller of the function from within which `get_caller_module` is called from."""
+    stack = inspect.stack()
+    caller_frame = stack[level]
+    caller_module = inspect.getmodule(caller_frame[0])
+    return caller_module.__name__ if caller_module else None

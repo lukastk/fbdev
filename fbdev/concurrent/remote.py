@@ -11,16 +11,17 @@ from typing import Type, Callable, Any, Tuple, Coroutine, List, Dict, Hashable, 
 import uuid
 import traceback
 from multiprocessing import Pipe
-from multiprocessing.connection import Connection, Client
+from multiprocessing.connection import Connection, Client, Listener
 import uuid
 import inspect
 from abc import ABC, abstractmethod
 import os, sys, time
 import subprocess
 from dataclasses import dataclass
+import secrets
 
 import fbdev
-from .._utils import StateCollection, StateHandler, AttrContainer, TaskManager, EventCollection, EventHandler
+from .._utils import StateCollection, StateHandler, AttrContainer, TaskManager, EventCollection, EventHandler, find_available_port
 from ..exceptions import NodeError
 from ..comp.packet import BasePacket, Packet
 from ..comp.port import PortType, PortSpec, PortSpecCollection, BasePort, Port, PortCollection, PortID
@@ -28,11 +29,12 @@ from ..comp.base_component import BaseComponent
 from ..graph.packet_registry import LocationUUID
 from ..graph.graph_spec import GraphSpec, NodeSpec, EdgeSpec
 from ..graph.packet_registry import TrackedPacket, PacketRegistry
-from ..graph.net import BaseNode, Node, NodePort, Edge, BaseNodePort, Net
+from ..graph.net import BaseNode, Node, NodePort, Edge, BaseNodePort
 
 # %% auto 0
 __all__ = ['RemoteController', 'get_client', 'ProxyEvent', 'ProxyEventMediator', 'ProxyStateHandler', 'ProxyStateHandlerMediator',
-           'ProxyPort', 'ProxyPortMediator']
+           'ProxyPort', 'ProxyPortMediator', 'ProxyPortCollection', 'start_subprocess_node_worker', 'RemoteNodeError',
+           'ProxyNode', 'ProxyNodeMediator']
 
 # %% ../../nbs/api/03_concurrent/01_remote.ipynb 6
 class RemoteController:
@@ -69,6 +71,8 @@ class RemoteController:
         self._closed = False
         self._remote_is_ready_event = asyncio.Event()
         self._send_queue = asyncio.Queue()
+        self._send_queue_is_empty_event = asyncio.Event()
+        self._send_queue_is_empty_event.set()
         self._sent_ready = False
         
     def add_routine(self, handle:Hashable, routine_key:Hashable, routine:Coroutine|Callable):
@@ -87,17 +91,23 @@ class RemoteController:
         await self._remote_is_ready_event.wait()
         self._sender_task = self._task_manager.create_task(self._sender())
         
+    async def await_empty(self):
+        return await self._send_queue_is_empty_event.wait()
+        
     def send_ready(self):
         self._conn.send(self.Package(msg=self.READY))
         self._sent_ready = True
     
     async def _receiver(self):
         loop = asyncio.get_running_loop()
-        while not self._closed:
+        while not self.closed:
             await asyncio.sleep(0)
             try:
                 pkg = await loop.run_in_executor(None, self._conn.recv)
             except ConnectionError:
+                self._closed = True
+                continue
+            except OSError:
                 self._closed = True
                 continue
             except EOFError:
@@ -112,7 +122,7 @@ class RemoteController:
                 if not self._sent_ready: raise RuntimeError("RemoteController is not ready")
                 if pkg.args is not None: raise RuntimeError("Unexpected args in DO_SUCCESSFUL:", pkg.args)
                 if pkg.kwargs is not None: raise RuntimeError("Unexpected kwargs in DO_SUCCESSFUL:", pkg.kwargs)
-                await self._do_request_successful(pkg.comm_id, pkg.val)
+                await self._do_request_successful(pkg.handle, pkg.routine_key, pkg.comm_id, pkg.val)
             elif pkg.msg == self.READY:
                 if self._remote_is_ready_event.is_set(): raise RuntimeError("Remote is already ready")
                 self._remote_is_ready_event.set()
@@ -120,11 +130,16 @@ class RemoteController:
                 raise RuntimeError(f"Unexpected message: {pkg.msg_str}")
     
     async def _sender(self):
-        while not self._closed:
+        while not self.closed:
             pkg = await self._send_queue.get()
+            if self._send_queue.empty():
+                self._send_queue_is_empty_event.set()
             try:
                 self._conn.send(pkg)
             except ConnectionError:
+                self._closed = True
+                continue
+            except OSError:
                 self._closed = True
                 continue
             except EOFError:
@@ -132,7 +147,7 @@ class RemoteController:
                 continue
     
     async def _do_request(self, handle, routine_key, comm_id, args, kwargs):
-        if self._closed: raise RuntimeError("RemoteController is closed")
+        if self.closed: raise RuntimeError("RemoteController is closed")
         if handle not in self._routines_by_handle:
             raise RuntimeError(f"Handle '{handle}' is not a remote handle")
         if routine_key not in self._routines_by_handle[handle]:
@@ -145,25 +160,33 @@ class RemoteController:
         pkg = self.Package(msg=self.DO_SUCCESSFUL, handle=handle, routine_key=routine_key, comm_id=comm_id, val=val)
         await self._send_queue.put(pkg)
     
-    async def _do_request_successful(self, comm_id, val):
-        if self._closed: raise RuntimeError("RemoteController is closed")
+    async def _do_request_successful(self, handle, routine_key, comm_id, val):
+        if self.closed:
+            return
+            #raise RuntimeError(f"RemoteController is closed. handle='{handle}' routine_key='{routine_key}'")
         await self._send_tickets[comm_id].put(val)
     
     async def do(self, handle:Hashable, routine_key:Hashable, *args, **kwargs):
-        if self._closed: raise RuntimeError("RemoteController is closed")
+        if self.closed:
+            return
+            #raise RuntimeError("RemoteController is closed")
         comm_id = uuid.uuid4().hex
         self._send_tickets[comm_id] = asyncio.Queue()
         pkg = self.Package(msg=self.DO, handle=handle, routine_key=routine_key, comm_id=comm_id, args=args, kwargs=kwargs)
+        self._send_queue_is_empty_event.clear()
         await self._send_queue.put(pkg)
         val = await self._send_tickets[comm_id].get()
         del self._send_tickets[comm_id]
         return val
     
     def sync_do(self, handle:Hashable, routine_key:Hashable, *args, **kwargs):
-        if self._closed: raise RuntimeError("RemoteController is closed")
+        if self.closed:
+            return
+            #raise RuntimeError("RemoteController is closed")
         comm_id = uuid.uuid4().hex
         self._send_tickets[comm_id] = asyncio.Queue()
         pkg = self.Package(msg=self.DO, handle=handle, routine_key=routine_key, comm_id=comm_id, args=args, kwargs=kwargs)
+        self._send_queue_is_empty_event.clear()
         self._send_queue.put_nowait(pkg)
         
     class RemoteHandleController:
@@ -322,7 +345,7 @@ class ProxyStateHandlerMediator:
     def _set(self, state):
         self._state_handler.set(state)
 
-# %% ../../nbs/api/03_concurrent/01_remote.ipynb 14
+# %% ../../nbs/api/03_concurrent/01_remote.ipynb 15
 class ProxyPort(BaseNodePort):
     def __init__(self, parent_handle:Hashable, remote:RemoteController, task_manager:TaskManager, port_spec:PortSpec, parent_node:Node):
         self._handle = (parent_handle, port_spec.port_type.label, port_spec.name)
@@ -410,3 +433,126 @@ class ProxyPortMediator:
         
     async def _parent_get(self):
         return await self._port._get()
+
+# %% ../../nbs/api/03_concurrent/01_remote.ipynb 17
+class ProxyPortCollection(PortCollection):
+    def __init__(self, port_spec_collection:PortSpecCollection, parent_node:Node, parent_handle:Hashable, remote:RemoteController, task_manager:TaskManager):
+        self._port_spec_collection: PortSpecCollection = port_spec_collection
+        self._ports: Dict[str, Port] = {}
+        for port_type in PortType:
+            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{ProxyPortCollection.__name__}.{port_type.label}"))
+        for port_spec in port_spec_collection.iter_ports():
+            self._add_port(ProxyPort(parent_handle, remote, task_manager, port_spec, parent_node))
+
+# %% ../../nbs/api/03_concurrent/01_remote.ipynb 19
+def start_subprocess_node_worker(node_spec:NodeSpec, port_num:int, authkey:bytes):
+    launch_script = f"""
+from fbdev.concurrent.subprocess_node_launcher import subprocess_node_worker
+# Don't think we need this import. Just keeping the comment for now...
+#from {node_spec.component_type.__module__} import {node_spec.component_type.__name__}
+subprocess_node_worker({port_num}, {authkey})
+""".strip()
+    proc = subprocess.Popen([sys.executable, '-c', launch_script])
+    return proc
+
+# %% ../../nbs/api/03_concurrent/01_remote.ipynb 20
+class RemoteNodeError(NodeError): pass
+
+class ProxyNode(BaseNode):
+    def __init__(self, node_spec: NodeSpec, parent_net:BaseNode|None):
+        super().__init__(node_spec, parent_net)
+        self._packet_registry: PacketRegistry = None
+        if self._parent_net:
+            self._packet_registry: PacketRegistry = self._parent_net._packet_registry
+        else:
+            self._packet_registry = PacketRegistry()
+            
+        self.__start_lock = asyncio.Lock()
+        self.__terminate_lock = asyncio.Lock()
+        
+        self._handle = ('main', self.spec.component_name)
+        self._remote_port_num = find_available_port()
+        self._remote_address = 'localhost'
+        self._remote_authkey = secrets.token_bytes(32)
+        
+        self._node_proc = start_subprocess_node_worker(self.spec, self._remote_port_num, self._remote_authkey)
+        self._remote_conn = get_client((self._remote_address, self._remote_port_num), authkey=self._remote_authkey)
+        
+        self._remote = RemoteController(self._remote_conn, self._task_manager)
+        self._remote.add_routine('main', 'submit_exception_from_remote', self._submit_exception_from_remote)
+        self._remote_handler = self._remote.get_handle_remote(self._handle)
+        self._remote.send_ready()
+        
+        self._states:StateCollection = StateCollection()
+        self._states._add_state(ProxyStateHandler("started", self._handle, self._remote))
+        self._states._add_state(ProxyStateHandler("stopped", self._handle, self._remote))
+        
+        self._port_proxies = ProxyPortCollection(self.component_type.port_specs, self, self._handle, self._remote, self._task_manager)
+        
+        self._remote.sync_do('main', 'create_node', self.spec)
+    
+    async def await_initialised(self):
+        for port in self.ports.iter_ports():
+            await port.await_initialised()
+        #await asyncio.gather(*[port.await_initialised() for port in self.ports.iter_ports()])
+    
+    @property
+    def states(self): return self._states
+    @property
+    def ports(self) -> PortCollection: return self._port_proxies
+    @property
+    def edge_connections(self) -> MappingProxyType[PortID, Edge]: ...
+    @property
+    def component_process(self) -> BaseComponent:
+        raise RuntimeError(f"{self.__class__.__name__} does not have a component_process.")
+    @property
+    def packet_registry(self) -> PacketRegistry: return self._packet_registry
+    
+    def _submit_exception_from_remote(self, task_str:str, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+        try:
+            raise RemoteNodeError() from exceptions[0]
+        except RemoteNodeError as e:
+            self.task_manager.submit_exception(task_str, exceptions + (e,), source_trace)
+    
+    async def start(self):
+        async with self.__start_lock:
+            await self._remote.await_ready()
+            await self._remote.do('main', 'await_node_created')
+            await self.await_initialised()
+            await self._remote_handler.do('start_node')
+        
+    async def stop(self):
+        async with self.__terminate_lock:
+            await self._remote_handler.do('stop_node')
+            await self.states.stopped.wait(True)
+            await self._remote.do('main', 'close_connection')
+            await self._remote.await_empty()
+            self._remote_conn.close()
+            self._node_proc.communicate()
+                
+class ProxyNodeMediator:
+    def __init__(self, parent_handle:Hashable, remote:RemoteController, task_manager:TaskManager, node:Node):
+        self._handle = (parent_handle, node.component_name)
+        self._node = node
+        self._task_manager = task_manager
+        
+        self._remote_handler = remote.get_handle_remote(self._handle)
+        self._remote_handler.add_routine('start_node', self._start_node)
+        self._remote_handler.add_routine('stop_node', self._stop_node)
+        
+        self._proxy_state_handler_mediators = [
+            ProxyStateHandlerMediator(self._handle, remote, task_manager, state)
+            for state in self._node.states.values()
+            if type(state) == StateHandler
+        ]
+        
+        self._proxy_port_mediators = [
+            ProxyPortMediator(self._handle, remote, task_manager, port)
+            for port in self._node.ports.iter_ports()
+        ]
+        
+    async def _start_node(self):
+        await self._node.start()
+
+    async def _stop_node(self):
+        await self._node.stop()

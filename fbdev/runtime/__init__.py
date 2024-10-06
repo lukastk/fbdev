@@ -1,4 +1,4 @@
 from . import _utils
-from .base_net_runtime import BaseNetRuntime
+from .base_runtime import BaseRuntime
 from .batch_executor import BatchExecutor
-from .net_process import NetProcess
+from .node_process import NodeProcess

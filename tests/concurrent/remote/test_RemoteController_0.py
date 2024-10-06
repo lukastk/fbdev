@@ -38,9 +38,12 @@ async def main(conn):
     remote.send_ready()
     await remote.await_ready()
     
-    await remote.do('main', 'msg_from_child', 'Hello from child!')
-    await remote.do('main', 'send_val_to_parent', 'from_child')
-    await asyncio.sleep(0.5)
+    await task_manager.exec_coros(
+        remote.do('main', 'msg_from_child', 'Hello from child!'),
+        remote.do('main', 'send_val_to_parent', 'from_child'),
+        asyncio.sleep(0.5),
+        sequentially=True
+    )
     assert child_values['val'] == 'from_parent'
 
 with listener.accept() as conn:
@@ -66,11 +69,14 @@ async def main():
         )
         
         remote.send_ready()
-        await remote.await_ready()
-        
-        await remote.do('main', 'msg_from_parent', 'Hello from parent!')
-        await remote.do('main', 'send_val_to_child', 'from_parent')
-        await asyncio.sleep(0.5)
+        await task_manager.exec_coros(
+            remote.await_ready(),
+            remote.do('main', 'msg_from_parent', 'Hello from parent!'),
+            remote.do('main', 'send_val_to_child', 'from_parent'),
+            asyncio.sleep(0.5),
+            sequentially=True
+        )
+
         assert parent_values['val'] == 'from_child'
         
     await task_manager.destroy()
