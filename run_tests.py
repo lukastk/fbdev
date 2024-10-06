@@ -11,7 +11,7 @@ print("")
 
 print("Running nbdev_test on test_nbs...")
 print("-----")
-os.system("nbdev_test --path test_nbs")
+os.system("nbdev_test --path test_nbs --do_print --n_workers 1")
 print("-----")
 print("")
 
