@@ -303,7 +303,7 @@ class TaskManager:
         self._host = host
         self._tasks = []
         self._cancelled_tasks = []
-        self._monitoring_task = asyncio.create_task(self._monitor_tasks())
+        self._monitoring_tasks = []
         self._callbacks: List[Callable[[asyncio.Task, Exception], None]] = []
         self._registered_exceptions = []
         self._exceptions_non_empty_condition = asyncio.Condition()
@@ -312,33 +312,19 @@ class TaskManager:
     def create_task(self, coroutine:Coroutine) -> asyncio.Task:
         task = asyncio.create_task(coroutine)
         self._tasks.append(task)
-        async def _notify():
-            async with self._tasks_non_empty_condition:
-                self._tasks_non_empty_condition.notify_all()
-        asyncio.create_task(_notify())
+        monitor_task = asyncio.create_task(self._monitor_task_exceptions(task))
+        self._monitoring_tasks.append(monitor_task)
         return task
-        
-    async def _monitor_tasks(self):
+                
+    async def _monitor_task_exceptions(self, task):
         try:
-            while True:
-                await asyncio.sleep(0)
-                async with self._tasks_non_empty_condition:
-                    await self._tasks_non_empty_condition.wait_for(lambda: len(self._tasks) > 0)
-                done, pending = await asyncio.wait(self._tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in done:
-                    try:
-                        exception = task.exception()
-                    except asyncio.CancelledError as e: # Because CancelledError is not a subclass of Exception, but BaseException
-                        exception = e
-                    if exception is not None:
-                        async with self._exceptions_non_empty_condition:
-                            if not self.is_cancelled(task):
-                                self.submit_exception(task, exception, ())
-                    self._tasks.remove(task)
-        except asyncio.CancelledError: # This registers the task cancel exception as handled.
-            pass
+            await task
+        except asyncio.CancelledError as e:
+            if not self.is_cancelled(task):
+                self.submit_exception(task, e, ())
         except Exception as e:
-            self.submit_exception(asyncio.current_task(), e, ())
+            self.submit_exception(task, e, ())
+        self._tasks.remove(task)
                 
     async def wait_for_exceptions(self):
         try:
@@ -390,16 +376,17 @@ class TaskManager:
     async def destroy(self):
         for task in self._tasks:
             await self.cancel_wait(task)
-        self._monitoring_task.cancel()
-        try: await self._monitoring_task
-        except asyncio.CancelledError: pass
+        for monitor_task in self._monitoring_tasks:
+            monitor_task.cancel()
+            try: await monitor_task
+            except asyncio.CancelledError: pass
             
     def get_task_coro_qualnames(self):
         qualnames = [task.get_coro().__qualname__ for task in self._tasks]
         qualname_counts = {name : qualnames.count(name) for name in set(qualnames)}
         return qualname_counts
     
-    async def exec_coros(self, *coros: List[Coroutine], print_all_exceptions=True):
+    async def exec_coros(self, *coros: List[Coroutine], print_all_exceptions=True, sequentially=False):
         """Run a coroutine and monitor for exceptions in the coroutine, as well as
         any exceptions that occurs in the task manager. Therefore, for it to work
         as expected, the coroutine must be starting tasks using self.create_task(),
@@ -407,9 +394,12 @@ class TaskManager:
         """
         results = []
         async def all_coros():
-            _tasks = [asyncio.create_task(coro) for coro in coros]
-            await asyncio.gather(*_tasks)
-            for task in _tasks: results.append(task.result())
+            if sequentially:
+                for coro in coros: await coro
+            else:
+                _tasks = [asyncio.create_task(coro) for coro in coros]
+                await asyncio.gather(*_tasks)
+                for task in _tasks: results.append(task.result())
         task = asyncio.create_task(all_coros())
         monitor_task = asyncio.create_task(self.wait_for_exceptions())
         await asyncio.wait([task, monitor_task], return_when=asyncio.FIRST_COMPLETED)
@@ -422,10 +412,11 @@ class TaskManager:
         
         if print_all_exceptions:
             for i, (task, e, source_trace) in enumerate(exceptions):
+                print(f"Exception {i+1} ({e.__class__.__name__}):")
                 msg = f"Message: {e}\n\n{''.join(traceback.format_exception(type(e), e, e.__traceback__))}\n\n"
                 msg = "\n".join([f"    {line}" for line in msg.split("\n")])
-                print(f"Exception {i+1} ({e.__class__.__name__}):")
                 print(msg)
+                print("    Source trace:", source_trace)
                 
         for task, e, source_trace in exceptions:
             raise e
