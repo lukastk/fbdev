@@ -5,13 +5,9 @@ class MyComponentFactory(BaseComponent):
     is_factory = True
 
     @classmethod
-    def create_component(cls, my_attr, set_module_name) -> Type[BaseComponent]:
-        return cls._create_component_class(class_attrs={
-            'my_attr' : my_attr
-        }, set_module_name=set_module_name)
-    
-    async def _post_start(self):
-        print(self.my_attr)
+    def create_component(cls) -> Type[BaseComponent]:
+        return cls._create_component_class(class_attrs={})
         
-comp_with_module_set = MyComponentFactory.create_component('hello world', True)
-comp_without_module_set = MyComponentFactory.create_component('hello world', False)
+comp_with_module_set = MyComponentFactory.create_component()
+comp_with_module_set.set_module()
+comp_without_module_set = MyComponentFactory.create_component()
