@@ -10,6 +10,7 @@ import traceback
 import inspect
 
 import fbdev
+from . import get_traceback_str
 
 # %% auto 0
 __all__ = ['TaskManager']
@@ -41,7 +42,7 @@ class TaskManager:
             # TaskManager.is_cancelled checks whether a given task was cancelled by the current task manager, but it cannot tell whether the task's cancellation was due to a parent task's cancellation.
             pass
         except Exception as e:
-            self.submit_exception(task, (e, ), ())
+            self.submit_exception(task, (e, ), (), ())
         self._tasks.remove(task)
                 
     async def wait_for_exceptions(self):
@@ -82,14 +83,21 @@ class TaskManager:
     def subscribe(self, callback: Callable[[asyncio.Task, Exception, Tuple[Any, ...]], None]):
         self._callbacks.append(callback)
         
-    def submit_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple[Any, ...]):
-        self._registered_exceptions.append((task, exceptions, source_trace + (str(self._host),)))
-        for callback in self._callbacks:
-            callback(task, exceptions, source_trace + (str(self._host),))
-        async def _notify():
-            async with self._exceptions_non_empty_condition:
-                self._exceptions_non_empty_condition.notify_all()
-        asyncio.create_task(_notify())
+    def submit_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple[Any, ...], tracebacks:Tuple[str, ...]):
+        try:
+            traceback_str = get_traceback_str(exceptions[0])
+            exception_data = (task, exceptions, source_trace + (str(self._host),), tracebacks + (traceback_str,))
+            self._registered_exceptions.append(exception_data)
+            for callback in self._callbacks:
+                callback(*exception_data)
+            async def _notify():
+                async with self._exceptions_non_empty_condition:
+                    self._exceptions_non_empty_condition.notify_all()
+            asyncio.create_task(_notify())
+        except Exception as e:
+            print(f"Error submitting exception: {e}")
+            traceback.print_exc()
+            raise
             
     async def destroy(self):
         for task in self._tasks:
@@ -124,27 +132,27 @@ class TaskManager:
         exception_data = self.get_exceptions()
         if task.done():
             try: await task
-            except Exception as e: exception_data.append((task, (e,), ()))
+            except Exception as e: exception_data.append((task, (e,), (str(self),), (get_traceback_str(e),)))
         if not monitor_task.done():
             monitor_task.cancel()
         
         if print_all_exceptions:
-            for i, (task, exceptions, source_trace) in enumerate(exception_data):
+            for i, (task, exceptions, source_trace, tracebacks) in enumerate(exception_data):
                 if len(exceptions) != len(source_trace):
                     raise RuntimeError("Mismatch in `exceptions` and `source_trace` length.")
                 print(f"Exception chain {i+1}:")
-                for j, (e, source) in enumerate(zip(exceptions, source_trace)):
+                for j, (e, source, traceback_str) in enumerate(zip(exceptions, source_trace, tracebacks)):
                     print(f"    Exception {j+1} ({e.__class__.__name__}):")
                     print(f"        Source:", source)
                     print(f"        Message: {e}")
-                    print(f"        Traceback:")
-                    traceback_str = ''.join(traceback.format_exception(type(e), e, e.__traceback__)).strip()
-                    traceback_str = "\n".join([f"            {line}" for line in traceback_str.split("\n")])
-                    print(traceback_str)
-                    
+                    if j == 0:
+                        print(f"        Traceback:")
+                        traceback_str = "\n".join([f"            {line}" for line in traceback_str.split("\n")])
+                        print(traceback_str)
+                        
         
         if exception_data:
-            _, _exceptions, _ = exception_data[0]
+            _, _exceptions, _, _ = exception_data[0]
             raise _exceptions[0]
         
         if len(results) == 1: return results[0]

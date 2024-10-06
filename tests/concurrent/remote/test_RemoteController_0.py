@@ -24,13 +24,12 @@ from fbdev.concurrent.remote import RemoteController
 
 listener = Listener(address, authkey=authkey)
 async def main(conn):
-    print("Child PID:", os.getpid())
     task_manager = TaskManager(None)
     child_values = {}
     def send_val_to_child(val): child_values['val'] = val
     remote = RemoteController(conn, task_manager,
         main={
-            'msg_from_parent' : lambda msg: print(f"Child (PID: {os.getpid()}) received: '{msg}'"),
+            'msg_from_parent' : lambda msg: print(f"Child received: '{msg}'"),
             'send_val_to_child' : send_val_to_child,
         }
     )
@@ -40,6 +39,7 @@ async def main(conn):
     
     await task_manager.exec_coros(
         remote.do('main', 'msg_from_child', 'Hello from child!'),
+        asyncio.sleep(0.1),
         remote.do('main', 'send_val_to_parent', 'from_child'),
         asyncio.sleep(0.5),
         sequentially=True
@@ -58,12 +58,11 @@ async def test():
     proc = subprocess.Popen([sys.executable, '-c', remote_py_script])
 
     with get_client(address, authkey=authkey) as conn:
-        print("Parent PID:", os.getpid())
         parent_values = {}
         def send_val_to_parent(val): parent_values['val'] = val
         remote = RemoteController(conn, task_manager,
             main={
-                'msg_from_child' : lambda msg: print(f"Parent (PID: {os.getpid()}) received: '{msg}'"),
+                'msg_from_child' : lambda msg: print(f"Parent received: '{msg}'"),
                 'send_val_to_parent' : send_val_to_parent,
             }
         )
@@ -71,9 +70,11 @@ async def test():
         remote.send_ready()
         await task_manager.exec_coros(
             remote.await_ready(),
+            asyncio.sleep(0.1),
             remote.do('main', 'msg_from_parent', 'Hello from parent!'),
+            asyncio.sleep(0.1),
             remote.do('main', 'send_val_to_child', 'from_parent'),
-            asyncio.sleep(0.5),
+            asyncio.sleep(0.1),
             sequentially=True
         )
 

@@ -19,11 +19,6 @@ class AttrContainer:
         self._attrs = dict(_attrs) if _attrs is not None else {}
         self._obj_name = obj_name
         self._dtype = dtype
-        
-    def __getattr__(self, key):
-        if key.startswith("__") and key.endswith("__"):
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{key}' (in {self._obj_name})")
-        return self[key]
     
     def __getitem__(self, key):
         if key in self._attrs:
@@ -37,6 +32,7 @@ class AttrContainer:
         if self._dtype is not None and not isinstance(value, self._dtype):
             raise TypeError(f"Value {value} is not of type {self._dtype} (in {self._obj_name}).")
         self._attrs[key] = value
+        setattr(self, key, value)
         
     def _remove(self, key):
         del self._attrs[key]

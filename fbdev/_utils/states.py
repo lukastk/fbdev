@@ -70,7 +70,7 @@ class StateHandler:
         return self.get_state_toggle_event(self._current_state, target_value=False)
     
     def __str__(self):
-        return f"State {self.name}: {self._current_state}"
+        return f"State {self.name}: {self.get()}"
     
     def __repr__(self):
         return self.__str__()

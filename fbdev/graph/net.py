@@ -416,7 +416,7 @@ class Node(BaseNode):
             await self.component_process.stop()
             self.states._stopped.set(True)
             
-    def _handle_component_process_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+    def _handle_component_process_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple, tracebacks:Tuple[str, ...]):
         try: raise ComponentError() from exceptions[0]
         except ComponentError as e:
-            self.task_manager.submit_exception(task, exceptions + (e,), source_trace)
+            self.task_manager.submit_exception(task, exceptions + (e,), source_trace, tracebacks)

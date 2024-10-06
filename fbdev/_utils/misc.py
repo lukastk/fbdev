@@ -14,6 +14,7 @@ import importlib.util
 import socket
 import random
 import inspect
+import traceback
 from abc import ABC, abstractmethod
 
 import fbdev
@@ -21,7 +22,7 @@ import fbdev
 # %% auto 0
 __all__ = ['is_valid_name', 'is_mutually_exclusive', 'is_in_event_loop', 'get_git_root_directory', 'root_dir',
            'extract_top_level_docstring', 'find_module_root', 'get_module_path_hierarchy', 'get_function_from_py_file',
-           'SingletonMeta', 'abstractproperty', 'find_available_port', 'get_caller_module']
+           'SingletonMeta', 'abstractproperty', 'find_available_port', 'get_caller_module', 'get_traceback_str']
 
 # %% ../../nbs/api/utils/misc.ipynb 5
 def is_valid_name(name: str) -> bool:
@@ -212,3 +213,7 @@ def get_caller_module(level=0) -> str:
     caller_frame = stack[level]
     caller_module = inspect.getmodule(caller_frame[0])
     return caller_module.__name__ if caller_module else None
+
+# %% ../../nbs/api/utils/misc.ipynb 44
+def get_traceback_str(e:Exception):
+    return ''.join(traceback.format_exception(type(e), e, e.__traceback__)).strip()

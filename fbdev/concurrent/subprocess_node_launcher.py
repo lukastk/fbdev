@@ -35,15 +35,19 @@ async def _create_node(node_spec:NodeSpec):
 async def _await_node_created():
     await node_created.wait()
     
-def _handle_remote_node_exception(task:asyncio.Task, exception:Exception, source_trace:Tuple):
-    remote.sync_do('main', 'submit_exception_from_remote', str(task), exception, source_trace)
+def _handle_remote_node_exception(task:asyncio.Task, exception:Exception, source_trace:Tuple, tracebacks:Tuple[str, ...]):
+    remote.sync_do('main', 'submit_exception_from_remote', str(task), exception, source_trace, tracebacks)
+    
+async def _close_connection():
+    await remote.await_empty() # This is so that the DO_SUCCESSFUL has time to be sent back
+    close_connection_event.set()
 
 # %% ../../nbs/api/03_concurrent/02_subprocess_node_launcher.ipynb 7
 def subprocess_node_worker(port_num:int, authkey:bytes):
     asyncio.run(_async_subprocess_node_worker(port_num, authkey))
 
 async def _async_subprocess_node_worker(port_num:int, authkey:bytes):
-    global remote, task_manager, node_created
+    global remote, task_manager, node_created, close_connection_event
     node_created = asyncio.Event()
     close_connection_event = asyncio.Event()
     listener = Listener(('localhost', port_num), authkey=authkey)
@@ -53,10 +57,9 @@ async def _async_subprocess_node_worker(port_num:int, authkey:bytes):
         remote = RemoteController(conn, task_manager)
         remote.add_routine('main', 'create_node', _create_node)
         remote.add_routine('main', 'await_node_created', _await_node_created)
-        remote.add_routine('main', 'close_connection', lambda: close_connection_event.set())
+        remote.add_routine('main', 'close_connection', _close_connection)
         remote.send_ready()
         await remote.await_ready()
         await node_created.wait()
         await close_connection_event.wait()
-        await remote.await_empty()
         await task_manager.destroy()

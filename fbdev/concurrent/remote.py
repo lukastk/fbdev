@@ -99,38 +99,44 @@ class RemoteController:
         self._sent_ready = True
     
     async def _receiver(self):
-        loop = asyncio.get_running_loop()
-        while not self.closed:
-            await asyncio.sleep(0)
-            try:
-                pkg = await loop.run_in_executor(None, self._conn.recv)
-            except ConnectionError:
-                self._closed = True
-                continue
-            except OSError:
-                self._closed = True
-                continue
-            except EOFError:
-                self._closed = True
-                continue
-
-            if pkg.msg == self.DO:
-                if not self._sent_ready: raise RuntimeError("RemoteController is not ready")
-                if pkg.val is not None: raise RuntimeError("Unexpected return value in DO:", pkg.val)
-                await self._do_request(pkg.handle, pkg.routine_key, pkg.comm_id, pkg.args, pkg.kwargs)
-            elif pkg.msg == self.DO_SUCCESSFUL:
-                if not self._sent_ready: raise RuntimeError("RemoteController is not ready")
-                if pkg.args is not None: raise RuntimeError("Unexpected args in DO_SUCCESSFUL:", pkg.args)
-                if pkg.kwargs is not None: raise RuntimeError("Unexpected kwargs in DO_SUCCESSFUL:", pkg.kwargs)
-                await self._do_request_successful(pkg.handle, pkg.routine_key, pkg.comm_id, pkg.val)
-            elif pkg.msg == self.READY:
-                if self._remote_is_ready_event.is_set(): raise RuntimeError("Remote is already ready")
-                self._remote_is_ready_event.set()
-            else:
-                raise RuntimeError(f"Unexpected message: {pkg.msg_str}")
+        try:
+            loop = asyncio.get_running_loop()
+            while True:
+                await asyncio.sleep(0)                    
+                try:
+                    pkg = await loop.run_in_executor(None, self._conn.recv)
+                except ConnectionError:
+                    self._closed = True
+                    break
+                except OSError:
+                    self._closed = True
+                    break
+                except EOFError:
+                    self._closed = True
+                    break
+                
+                if pkg.msg == self.DO:
+                    if not self._sent_ready: raise RuntimeError("RemoteController is not ready")
+                    if pkg.val is not None: raise RuntimeError("Unexpected return value in DO:", pkg.val)
+                    self._task_manager.create_task(
+                        self._do_request(pkg.handle, pkg.routine_key, pkg.comm_id, pkg.args, pkg.kwargs)
+                    )
+                elif pkg.msg == self.DO_SUCCESSFUL:
+                    if not self._sent_ready: raise RuntimeError("RemoteController is not ready")
+                    if pkg.args is not None: raise RuntimeError("Unexpected args in DO_SUCCESSFUL:", pkg.args)
+                    if pkg.kwargs is not None: raise RuntimeError("Unexpected kwargs in DO_SUCCESSFUL:", pkg.kwargs)
+                    self._do_request_successful(pkg.handle, pkg.routine_key, pkg.comm_id, pkg.val)
+                elif pkg.msg == self.READY:
+                    if self._remote_is_ready_event.is_set(): raise RuntimeError("Remote is already ready")
+                    self._remote_is_ready_event.set()
+                else:
+                    raise RuntimeError(f"Unexpected message: {pkg.msg_str}")
+        except Exception as e:
+            print(e)
+            raise
     
     async def _sender(self):
-        while not self.closed:
+        while True:
             pkg = await self._send_queue.get()
             if self._send_queue.empty():
                 self._send_queue_is_empty_event.set()
@@ -160,16 +166,14 @@ class RemoteController:
         pkg = self.Package(msg=self.DO_SUCCESSFUL, handle=handle, routine_key=routine_key, comm_id=comm_id, val=val)
         await self._send_queue.put(pkg)
     
-    async def _do_request_successful(self, handle, routine_key, comm_id, val):
+    def _do_request_successful(self, handle, routine_key, comm_id, val):
         if self.closed:
-            return
-            #raise RuntimeError(f"RemoteController is closed. handle='{handle}' routine_key='{routine_key}'")
-        await self._send_tickets[comm_id].put(val)
+            raise RuntimeError(f"RemoteController is closed. handle='{handle}' routine_key='{routine_key}'")
+        self._send_tickets[comm_id].put_nowait(val)
     
     async def do(self, handle:Hashable, routine_key:Hashable, *args, **kwargs):
         if self.closed:
-            return
-            #raise RuntimeError("RemoteController is closed")
+            raise RuntimeError("RemoteController is closed")
         comm_id = uuid.uuid4().hex
         self._send_tickets[comm_id] = asyncio.Queue()
         pkg = self.Package(msg=self.DO, handle=handle, routine_key=routine_key, comm_id=comm_id, args=args, kwargs=kwargs)
@@ -459,7 +463,7 @@ subprocess_node_worker({port_num}, {authkey})
 class RemoteNodeError(NodeError): pass
 
 class ProxyNode(BaseNode):
-    def __init__(self, node_spec: NodeSpec, parent_net:BaseNode|None):
+    def __init__(self, node_spec: NodeSpec, parent_net:BaseNode|None=None):
         super().__init__(node_spec, parent_net)
         self._packet_registry: PacketRegistry = None
         if self._parent_net:
@@ -490,11 +494,9 @@ class ProxyNode(BaseNode):
         self._port_proxies = ProxyPortCollection(self.component_type.port_specs, self, self._handle, self._remote, self._task_manager)
         
         self._remote.sync_do('main', 'create_node', self.spec)
-    
+        
     async def await_initialised(self):
-        for port in self.ports.iter_ports():
-            await port.await_initialised()
-        #await asyncio.gather(*[port.await_initialised() for port in self.ports.iter_ports()])
+        await asyncio.gather(*[port.await_initialised() for port in self.ports.iter_ports()])
     
     @property
     def states(self): return self._states
@@ -508,11 +510,11 @@ class ProxyNode(BaseNode):
     @property
     def packet_registry(self) -> PacketRegistry: return self._packet_registry
     
-    def _submit_exception_from_remote(self, task_str:str, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+    def _submit_exception_from_remote(self, task_str:str, exceptions:Tuple[Exception, ...], source_trace:Tuple, tracebacks:Tuple[str, ...]):
         try:
             raise RemoteNodeError() from exceptions[0]
         except RemoteNodeError as e:
-            self.task_manager.submit_exception(task_str, exceptions + (e,), source_trace)
+            self.task_manager.submit_exception(task_str, exceptions + (e,), source_trace, tracebacks)
     
     async def start(self):
         async with self.__start_lock:
@@ -525,8 +527,8 @@ class ProxyNode(BaseNode):
         async with self.__terminate_lock:
             await self._remote_handler.do('stop_node')
             await self.states.stopped.wait(True)
-            await self._remote.do('main', 'close_connection')
             await self._remote.await_empty()
+            await self._remote.do('main', 'close_connection')
             self._remote_conn.close()
             self._node_proc.communicate()
                 

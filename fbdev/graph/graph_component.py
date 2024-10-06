@@ -42,13 +42,13 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
     @property
     def _packet_registry(self) -> PacketRegistry: return self._parent_net._packet_registry
     
-    def _handle_node_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+    def _handle_node_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple, tracebacks:Tuple[str, ...]):
         try: raise NodeError() from exceptions[0]
-        except NodeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace)
+        except NodeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace, tracebacks)
     
-    def _handle_edge_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple):
+    def _handle_edge_exception(self, task:asyncio.Task, exceptions:Tuple[Exception, ...], source_trace:Tuple, tracebacks:Tuple[str, ...]):
         try: raise EdgeError() from exceptions[0]
-        except EdgeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace)
+        except EdgeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace, tracebacks)
     
     @classmethod
     def create_component(cls, graph, expose_graph=True) -> Type[BaseComponent]:
@@ -68,13 +68,9 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
             self._edges[edge_spec.id] = Edge(edge_spec, self)
             self._edges[edge_spec.id].task_manager.subscribe(self._handle_edge_exception)
         
-        for node in self._nodes.values():
-            await node.start()
-        for edge in self.edges.values():
-            edge.start()
-            
+        await asyncio.gather(*[node.start() for node in self._nodes.values()])
+        for edge in self.edges.values(): edge.start()
+        
     async def _pre_stop(self):
-        for node in self._nodes.values():
-            await node.stop()
-        for edge in self.edges.values():
-            await edge.stop()
+        await asyncio.gather(*[node.stop() for node in self._nodes.values()])
+        await asyncio.gather(*[edge.stop() for edge in self._edges.values()])
