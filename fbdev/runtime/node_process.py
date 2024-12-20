@@ -10,6 +10,7 @@ import asyncio
 from typing import Any, Callable, Dict, List, Union, Tuple
 
 import fbdev
+from ..comp.base_component import BaseComponent
 from ..comp.port import PortType, PortSpec, PortSpecCollection, PortID, PortCollection
 from ..graph.net import BaseNode, NodePort, Address, NodePortCollection
 from . import BaseRuntime
@@ -47,20 +48,29 @@ class NodeProcessPortCollection(NodePortCollection):
 class NodeProcess(BaseRuntime):
     def __init__(self, node:BaseNode, stop_port:PortID=None):
         super().__init__()
-        self._node:BaseNode = node
+        self._container_node:BaseNode = node
         self._stop_port = stop_port
         self._stop_listener_task = None
         
         self._ports = NodeProcessPortCollection(
-            _port_collection=self._node.ports,
-            _parent_node=self._node
+            _port_collection=self._container_node.ports,
+            _parent_node=self._container_node
         )
         
-        if self._stop_port is not None and self._stop_port not in self._node.ports:
+        if self._stop_port is not None and self._stop_port not in self._container_node.ports:
             raise ValueError(f"Port {self._stop_port} does not exist in node.")
 
     @property
     def ports(self) -> NodeProcessPortCollection: return self._ports
+    
+    @property
+    def node(self) -> BaseNode:
+        if not self.started or self.stopped:
+            raise RuntimeError(f"NodeProcess not running.")
+        return list(self._container_node.component_process.nodes.values())[0]
+    
+    def component_process(self) -> BaseComponent:
+        return self.node.component_process
     
     async def gather_outputs(self, *ports:List[Union[Union[str,NodeProcessPort], Tuple[Union[str,NodeProcessPort], int]]], return_packets:bool=False) -> List[BasePacket]:
         _ports = []
@@ -96,12 +106,12 @@ class NodeProcess(BaseRuntime):
         if self._stop_port is not None:
             async def stop_listener():
                 try:
-                    await self._node.ports[self._stop_port].get()
+                    await self._container_node.ports[self._stop_port].get()
                     if not self._stopped: await self.stop()
                 except asyncio.CancelledError: pass
             self._stop_listener_task = asyncio.create_task(stop_listener())
             
-        await self._node.task_manager.exec_coros(self._node.start())
+        await self._container_node.task_manager.exec_coros(self._container_node.start())
         self._started = True
     
     async def await_stop(self):
@@ -109,7 +119,7 @@ class NodeProcess(BaseRuntime):
         # For some reason this would cause all tasks to just hang forever.
         # So instead, we just wait for the node to stop.
         # Really perplexing...
-        await self._node.task_manager.exec_coros(self._node.states.stopped.wait(True), print_all_exceptions=False)
+        await self._container_node.task_manager.exec_coros(self._container_node.states.stopped.wait(True), print_all_exceptions=False)
     
     async def stop(self):
         await super().stop()
@@ -117,8 +127,8 @@ class NodeProcess(BaseRuntime):
             self._stop_listener_task.cancel()
             try: await self._stop_listener_task
             except asyncio.CancelledError: pass
-        await self._node.task_manager.exec_coros(self._node.stop(), print_all_exceptions=False)
+        await self._container_node.task_manager.exec_coros(self._container_node.stop(), print_all_exceptions=False)
         self._stopped = True
         
     async def await_message(self, name:str):
-        await self._node.task_manager.exec_coros(self._node.await_message(name), print_all_exceptions=False)
+        await self._container_node.task_manager.exec_coros(self._container_node.await_message(name), print_all_exceptions=False)
