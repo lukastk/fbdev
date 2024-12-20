@@ -1,3 +1,9 @@
+Version: 0.0.4
+Date: 2024-12-20 16:36:07 GMT
+Release owner: Lukas Kikuchi
+Release owner email: lukas.kikuchi@gmail.com
+Commit hash: f8f57f5b57fb1e3bb19f2077c9e35dcc620820dd
+
 Version: 0.0.3
 Date: 2024-10-06 21:31:46 BST
 Release owner: Lukas Kikuchi
