@@ -109,7 +109,7 @@ class PortSpec:
     def __repr__(self) -> str:
         return str(self)
 
-    def copy(self):
+    def copy(self) -> PortSpec:
         if self.has_default:
             port_spec = PortSpec(
                 self._port_type,
@@ -150,13 +150,19 @@ class PortSpecCollection:
     def __contains__(self, key): return key in self._ports
     def as_dict(self) -> Dict[str, PortSpec]: return MappingProxyType(self._ports)
     def iter_ports(self) -> Iterator[PortSpec]: return self._ports.values()
+    def iter_input_ports(self) -> Iterator[PortSpec]: return (port_spec for port_spec in self._ports.values() if port_spec.is_input_port)
+    def iter_output_ports(self) -> Iterator[PortSpec]: return (port_spec for port_spec in self._ports.values() if port_spec.is_output_port)
+    
+    def get_all(self, port_type:PortType=None) -> List[PortSpec]:
+        if port_type is None: return list(self._ports.values())
+        return [port for port in self._ports.values() if port.port_type == port_type]
     
     def make_readonly(self): self._readonly = True
     
     def add_port(self, port_spec:PortSpec):
         if self._readonly: raise RuntimeError("Cannot add ports to a readonly PortSpecCollection.")
         if not is_valid_name(port_spec.name): raise ValueError(f"Invalid port name '{port_spec.name}'.")
-        if port_spec.id in self._ports: raise ValueError(f"Port name '{port_spec.name}' already exists in {self.__class__.__name__}.")
+        if port_spec.id in self._ports: raise ValueError(f"Port '{port_spec.id_str}' already exists in {self.__class__.__name__}.")
         self._ports[port_spec.id] = port_spec
         
         name_parts = port_spec.name.split('.')
@@ -172,7 +178,7 @@ class PortSpecCollection:
     
     def remove_port(self, port_spec:PortSpec):
         if self._readonly: raise RuntimeError("Cannot remove ports from a readonly PortSpecCollection.")
-        if port_spec.id not in self._ports: raise ValueError(f"Port name '{port_spec.name}' does not exist in {self.__class__.__name__}.")
+        if port_spec.id not in self._ports: raise ValueError(f"Port name '{port_spec.id_str}' does not exist in {self.__class__.__name__}.")
         del self._ports[port_spec.id]
         getattr(self, port_spec.port_type.label)._remove(port_spec.name)
         
@@ -220,6 +226,8 @@ class BasePort(ABC):
     def name(self) -> str: ...
     @abstractproperty
     def id(self) -> str: ...
+    @property
+    def id_str(self) -> str: return self.spec.id_str
     @abstractproperty
     def port_type(self) -> PortType: ...
     @abstractproperty
@@ -247,6 +255,8 @@ class BasePort(ABC):
     async def _get_and_consume(self) -> Any:
         packet: BasePacket = await self._get()
         return await packet.consume()
+    
+    def __repr__(self) -> str: return self.spec.__repr__()
 
 # %% ../../nbs/api/00_comp/01_port.ipynb 16
 class Port(BasePort):
@@ -380,6 +390,12 @@ class PortCollection:
     def as_dict(self) -> Dict[str, Port]: return MappingProxyType(self._ports)
     
     def iter_ports(self) -> Iterator[Port]: return self._ports.values().__iter__()
+    def iter_input_ports(self) -> Iterator[Port]: return (port for port in self._ports.values() if port.is_input_port)
+    def iter_output_ports(self) -> Iterator[Port]: return (port for port in self._ports.values() if port.is_output_port)
+
+    def get_all(self, port_type:PortType=None) -> List[PortSpec]:
+        if port_type is None: return list(self._ports.values())
+        return [port for port in self._ports.values() if port.port_type == port_type]
 
     def __str__(self): return self._port_spec_collection.__str__()
     

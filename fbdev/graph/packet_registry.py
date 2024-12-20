@@ -6,6 +6,7 @@
 from __future__ import annotations
 from typing import Type, List, Dict, Set
 from datetime import datetime, timezone
+from abc import ABC, abstractmethod
 
 import fbdev
 from ..comp.packet import BasePacket, Packet, PacketUUID
@@ -49,7 +50,13 @@ class TrackedPacket(BasePacket):
         return TrackedPacket(empty_packet)
 
 # %% ../../nbs/api/01_graph/01_packet_registry.ipynb 9
-class PacketActivity:
+def _lookup_location_address(location_uuid:LocationUUID) -> str:
+    from fbdev.graph.net import lookup_location_uuid
+    return lookup_location_uuid(location_uuid).address if location_uuid else 'EXTERNAL_LOCATION'
+
+
+# %% ../../nbs/api/01_graph/01_packet_registry.ipynb 10
+class PacketActivity(ABC):
     def __init__(self, packet_uuid: PacketUUID, location: LocationUUID, timestamp: datetime = None):
         self._packet_uuid:PacketUUID = packet_uuid
         if timestamp is None: timestamp = datetime.now(timezone.utc)
@@ -64,6 +71,9 @@ class PacketActivity:
     def location(self) -> LocationUUID: return self._location
     @property
     def is_location_external(self) -> bool: return self.location == TrackedPacket.EXTERNAL_LOCATION
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(packet_uuid={self.packet_uuid}, location={_lookup_location_address(self.location)}, timestamp={self.timestamp})"
 
 #|export
 class PacketCreation(PacketActivity):
@@ -74,6 +84,9 @@ class PacketCreation(PacketActivity):
     @property
     def packet_dtype(self) -> Type: return self._packet_dtype
     
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(packet_uuid={self.packet_uuid}, location={_lookup_location_address(self.location)}, timestamp={self.timestamp})"
+    
 #|export
 class PacketConsumption(PacketActivity):
     def __init__(self, packet_uuid: PacketUUID, location:LocationUUID, payload_dtype: Type, timestamp: datetime = None):
@@ -82,6 +95,9 @@ class PacketConsumption(PacketActivity):
     
     @property
     def payload_dtype(self) -> Type: return self._payload_dtype
+    
+    def __repr__(self) -> str:
+        return f"{self.__class__.__name__}(packet_uuid={self.packet_uuid}, location={_lookup_location_address(self.location)}, timestamp={self.timestamp})"
         
 #|export
 class PacketMovement(PacketActivity):
@@ -107,8 +123,13 @@ class PacketMovement(PacketActivity):
     def is_origin_external(self) -> bool: return self.origin == TrackedPacket.EXTERNAL_LOCATION
     @property
     def is_dest_external(self) -> bool: return self.dest == TrackedPacket.EXTERNAL_LOCATION
+    
+    def __repr__(self) -> str:
+        via_port_str = f"{self.via[0].label}.{self.via[1]}"
+        return f"{self.__class__.__name__}(packet_uuid={self.packet_uuid}, origin={_lookup_location_address(self.origin)}, dest={_lookup_location_address(self.dest)}, via={via_port_str}, timestamp={self.timestamp})"
 
-# %% ../../nbs/api/01_graph/01_packet_registry.ipynb 11
+
+# %% ../../nbs/api/01_graph/01_packet_registry.ipynb 12
 class PacketRegistry:
     def __init__(self):
         self._packets:Dict[PacketUUID, TrackedPacket] = {}
@@ -123,9 +144,11 @@ class PacketRegistry:
         """This method should only be called within the constructor of TrackedPacket."""
         if type(packet) != TrackedPacket:
             raise TypeError(f"Argument `packet` must be of type `TrackedPacket`, got '{type(packet)}'.")
+        if packet.is_consumed:
+            raise RuntimeError(f"Tried to register consumed packet '{packet.uuid}'.")
         if packet.uuid in self._packets:
-            loc_address = fbdev.graph.net.lookup_location_uuid(self._packet_locations[packet.uuid]).address
-            raise RuntimeError(f"Tried registering packet '{packet.uuid}' at {loc_address} already exists in registry.")
+            loc_address = _lookup_location_address(self._packet_locations[packet.uuid])
+            raise RuntimeError(f"Tried registering packet '{packet.uuid}' at {loc_address}, but it already exists in registry.")
         self._packets[packet.uuid] = packet
         self._packet_locations[packet.uuid] = location
         self._history.append(
@@ -135,21 +158,51 @@ class PacketRegistry:
     def register_move(self, packet:TrackedPacket, origin:LocationUUID, dest:LocationUUID, via:PortID):
         if packet.uuid not in self._packets:
             raise RuntimeError(f"Packet '{packet.uuid}' is not registered.")
+        if packet.is_consumed:
+            raise RuntimeError(f"Tried to move consumed packet '{packet.uuid}'.")
         if origin != self._packet_locations[packet.uuid]:
-            origin_address = fbdev.graph.net.lookup_location_uuid(origin).address
-            dest_address = fbdev.graph.net.lookup_location_uuid(dest).address
-            raise RuntimeError(f"Tried to move packet '{packet.uuid}' from '{origin_address}' to '{dest_address}', but it is not at '{origin_address}'.")
+            origin_address = _lookup_location_address(origin)
+            dest_address = _lookup_location_address(dest)
+            packet_loc_address = _lookup_location_address(self._packet_locations[packet.uuid])
+            raise RuntimeError(f"Tried to move packet '{packet.uuid}' from '{origin_address}' to '{dest_address}', but it is not at '{origin_address}', it is at {packet_loc_address}.")
         self._history.append(
-            PacketMovement(packet.uuid, origin, dest, PortID)
+            PacketMovement(packet.uuid, origin, dest, via)
         )
+        self._packet_locations[packet.uuid] = dest
         
     def register_consumption(self, packet:TrackedPacket, payload_dtype:Type):
         if packet.uuid not in self._packets:
             raise RuntimeError(f"Packet '{packet.uuid}' is not registered.")
         if not packet.is_consumed:
-            loc_address = fbdev.graph.net.lookup_location_uuid(self._packet_locations[packet.uuid]).address
+            loc_address = _lookup_location_address(self._packet_locations[packet.uuid])
             raise RuntimeError(f"Tried to register packet '{packet.uuid}' as consumed at '{loc_address}', but it is already consumed.")
         self._consumed_packets.add(packet.uuid)
         self._history.append(
             PacketConsumption(packet.uuid, self._packet_locations[packet.uuid], payload_dtype)
         )
+        
+    def print_packet_history(self, packet:PacketUUID|BasePacket):
+        if isinstance(packet, PacketUUID): packet = self._packets[packet]
+        if not self.is_registered(packet):
+            raise RuntimeError(f"Packet '{packet.uuid}' is not registered.")
+        
+        packet_history = [ev for ev in self._history if ev.packet_uuid == packet.uuid]
+        packet_history.sort(key=lambda e: e.timestamp)
+        
+        def _is_edge(location_uuid:LocationUUID) -> str:
+            from fbdev.graph.net import lookup_location_uuid, Edge
+            return isinstance(lookup_location_uuid(location_uuid), Edge) if location_uuid else 'EXTERNAL_LOCATION'
+        
+        for ev in packet_history:
+            if type(ev) == PacketCreation:
+                print(f"{ev.timestamp}: CREATED   {_lookup_location_address(ev.location)}")
+            elif type(ev) == PacketConsumption:
+                print(f"{ev.timestamp}: CONSUMED  {_lookup_location_address(ev.location)}")
+            elif type(ev) == PacketMovement:
+                port_name = f"{ev.via[0].label}.{ev.via[1]}"
+                origin = _lookup_location_address(ev.origin) if _is_edge(ev.origin) else f"{_lookup_location_address(ev.origin)}:{port_name}"
+                dest = _lookup_location_address(ev.dest) if _is_edge(ev.dest) else f"{_lookup_location_address(ev.dest)}:{port_name}"
+                print(f"{ev.timestamp}: MOVED     {origin} >> {dest}")
+            else:
+                raise RuntimeError(f"Unpexected packet activity type: {type(ev)}")
+

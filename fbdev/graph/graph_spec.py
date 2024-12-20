@@ -19,18 +19,18 @@ __all__ = ['EdgeSpec', 'NodeSpec', 'GraphSpec']
 
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 6
 class EdgeSpec:
-    def __init__(self, *,
-                 _id:str,
-                 _maxsize:int,
-                 _parent_graph:GraphSpec):
-        self._id:str = _id
-        if _maxsize == 0: raise ValueError("Edge maxsize cannot be 0.")
-        self.maxsize = _maxsize
-        self._parent_graph:GraphSpec = _parent_graph
+    def __init__(self,
+                 id:str,
+                 maxsize:int):
+        self._id:str = id
+        if maxsize == 0: raise ValueError("Edge maxsize cannot be 0.")
+        self.maxsize = maxsize
         self._tail_node_id:str|None = None
         self._tail_node_port_id:PortID|None = None
         self._head_node_id:str|None = None
         self._head_node_port_id:PortID|None = None
+        
+        self._parent_graph:GraphSpec = None # Set by the parent GraphSpec
         
     @property
     def id(self) -> str: return self._id
@@ -88,6 +88,9 @@ class EdgeSpec:
             return other
         else:
             raise TypeError(f"Argument `other` must be a NodePortSpec or NodeSpec. Got '{type(other)}'.")
+        
+    def copy(self) -> EdgeSpec:
+        return EdgeSpec(id=self.id, maxsize=self.maxsize)
 
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 8
 class NodePortSpec(PortSpec):
@@ -167,15 +170,16 @@ class NodePortSpec(PortSpec):
 class NodeSpec:
     def __init__(self, 
                  component_type:Type[BaseComponent],
-                 parent_graph:GraphSpec=None,
                  id:str=None,
                  node_type:Type[fbdev.graph.net.BaseNode]=None):
         if node_type is None: node_type = fbdev.graph.net.Node
         self._id = id
         self._component_type = component_type
-        self._parent_graph = parent_graph
         self._edge_connections: Dict[PortID, str] = {}
         self._node_type = node_type
+        
+        self._parent_graph:GraphSpec = None # Set by the parent GraphSpec
+        # Note: This self._parent_graph potentially makes the NodeSpec unpickleable. Should be set to None before trying to pickle.
         
     @property
     def id(self) -> str: return self._id
@@ -243,6 +247,9 @@ class NodeSpec:
     
     def create_node(self, parent_net:fbdev.graph.net.Net|None=None) -> fbdev.graph.net.BaseNode:
         return self.node_type(self, parent_net)
+    
+    def copy(self) -> NodeSpec:
+        return NodeSpec(self._component_type, id=self.id, node_type=self._node_type)
 
 # %% ../../nbs/api/01_graph/00_graph_spec.ipynb 12
 class GraphSpec:
@@ -266,13 +273,16 @@ class GraphSpec:
         return _port_spec_collection
     
     @property
+    def id(self) -> str: return self.GRAPH_ID
+    
+    @property
     def nodes(self) -> MappingProxyType[str, NodeSpec]: return MappingProxyType(self._nodes)
     @property
     def edges(self) -> MappingProxyType[str, EdgeSpec]: return MappingProxyType(self._edges)
     
     def add_graph_port(self, port_spec:PortSpec) -> NodePortSpec:
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
-        self._port_specs.add_port(port_spec)
+        self._port_specs.add_port(port_spec.copy())
         return self.ports[port_spec.id]
         
     def remove_graph_port(self, port_spec:PortSpec):
@@ -299,31 +309,45 @@ class GraphSpec:
         if node_id == GraphSpec.GRAPH_ID: return self
         else: return self._nodes[node_id]
     
-    def add_node(self, component_type:Type[BaseComponent], id:Optional[str]=None, node_type:Type[fbdev.graph.net.BaseNode]=None) -> NodeSpec:
+    def add(self, obj:NodeSpec|EdgeSpec|PortSpec):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
+        if isinstance(obj, PortSpec): self.add_graph_port(node)
+        elif isinstance(obj, NodeSpec):
+            node = obj
+            if node.id is None: raise ValueError("Node must have an id.")
+            if node.id in self._nodes: raise ValueError(f"Node with id '{node.id}' already exists")
+            if type(node.id) != str: raise TypeError(f"Node id must be a string, got '{type(node.id)}'")
+            if node.id == GraphSpec.GRAPH_ID: raise ValueError(f"Node id '{node.id}' is reserved for the graph itself.")
+            if not is_valid_name(node.id): raise ValueError(f"'{node.id}' is not a valid Node id.")
+            node._parent_graph = self
+            self._nodes[str(node.id)] = node
+        elif isinstance(obj, EdgeSpec):
+            edge = obj
+            if edge.id is None: raise ValueError("Edge must have an id.")
+            if edge.id in self._edges: raise ValueError(f"Edge with id '{edge.id}' already exists")
+            if type(edge.id) != str: raise TypeError(f"Edge id must be a string, got '{type(edge.id)}'")
+            if not is_valid_name(edge.id): raise ValueError(f"'{edge.id}' is not a valid Edge id.")
+            edge._parent_graph = self
+            self._edges[str(edge.id)] = edge
+        else:
+            raise TypeError(f"Argument `obj` must be a NodeSpec, EdgeSpec, or PortSpec. Got '{type(obj)}'.")
+        
+        return obj
+    
+    def add_node(self, component_type:Type[BaseComponent], id:Optional[str]=None, node_type:Type[fbdev.graph.net.BaseNode]=None) -> NodeSpec:
         if id is None:
             num_comps = len([node for node in self._nodes.values() if node.component_type == component_type])
             id = component_type.__name__ + str(num_comps) if num_comps else component_type.__name__
-        if id in self._nodes: raise ValueError(f"Node with id {id} already exists")
-        if type(id) != str: raise TypeError(f"Node id must be a string, got {type(id)}")
-        if id == GraphSpec.GRAPH_ID: raise ValueError(f"Node id '{id}' is reserved for the graph itself.")
-        if not is_valid_name(id): raise ValueError(f"'{id}' is not a valid Node id.")
-        node = NodeSpec(component_type=component_type, parent_graph=self, id=id, node_type=node_type)
-        self._nodes[str(id)] = node
-        return node
+        node = NodeSpec(component_type=component_type, id=id, node_type=node_type)
+        return self.add(node)
     
     def add_edge(self, maxsize:Optional[int]=None, id:Optional[str]=None) -> EdgeSpec:
-        if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         if id is None:
             id = f'edge{str(len(self._edges))}'
-        if id in self._edges: raise ValueError(f"Node with id {id} already exists")
-        if type(id) != str: raise TypeError(f"Node id must be a string, got {type(id)}")
-        if not is_valid_name(id): raise ValueError(f"'{id}' is not a valid Edge id.")
-        edge = EdgeSpec(_id=id, _maxsize=maxsize, _parent_graph=self)
-        self._edges[str(id)] = edge
-        return edge
+        edge = EdgeSpec(id=id, maxsize=maxsize)
+        return self.add(edge)
     
-    def connect_port_to_edge(self, port_spec:NodePortSpec|str, edge:EdgeSpec|str):
+    def connect_port_to_edge(self, port_spec:NodePortSpec, edge:EdgeSpec|str):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         node = self.__get_node(port_spec._parent_node)
         edge = self.__get_edge(edge)
@@ -347,39 +371,38 @@ class GraphSpec:
             edge._head_node_id = node_id
             edge._head_node_port_id = (port_spec.port_type, port_spec.name)
         
-    def disconnect_port_from_edge(self, port_spec:NodePortSpec|str, edge:EdgeSpec|str):
+    def disconnect_port_from_edge(self, port_spec:NodePortSpec, edge:EdgeSpec|str):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         node = self.__get_node(port_spec._parent_node)
         edge = self.__get_edge(edge)
+    
+        if node._edge_connections[(port_spec.port_type, port_spec.name)] != edge.id:
+            raise ValueError(f"Edge '{edge.id}' is not connected to port '{port_spec.__repr__()}'.")
         
-        is_tail_connection = port_spec.is_output_port
-        if is_tail_connection and edge._tail_id is None:
-            raise ValueError(f"Edge '{edge.id}' does not have a tail connection.")
-        elif (not is_tail_connection) and edge._head_id is None:
-            raise ValueError(f"Edge '{edge.id}' does not have a head connection.")
-        
+        is_tail_connection = edge.tail == node
         del node._edge_connections[(port_spec.port_type, port_spec.name)]
         if is_tail_connection:
-            edge._tail_id = None
+            edge._tail_node_id = None
             edge._tail_node_port_id = None
         else:
-            edge._head_id = None
+            edge._head_node_id = None
             edge._head_node_port_id = None
     
     def remove_node(self, node:str|NodeSpec):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         node = self.__get_node(node)
-        for (port_type, port_name), edge_id in node._edge_connections.items():
-            self.disconnect_node_and_edge(node, port_type, port_name, edge_id)
+        for (port_type, port_name), edge_id in list(node._edge_connections.items()):
+            port = node.ports[(port_type, port_name)]
+            self.disconnect_port_from_edge(port, edge_id)
         del self._nodes[node.id]
         
     def remove_edge(self, edge:str|EdgeSpec):
         if self._readonly: raise RuntimeError("GraphSpec is readonly.")
         edge = self.__get_edge(edge)
         if edge._tail_node_id is not None:
-            self.__remove_edge_helper(edge._tail_node_id)
+            self.__remove_edge_helper(edge, edge._tail_node_id)
         if edge._head_node_id is not None:
-            self.__remove_edge_helper(edge._head_node_id)
+            self.__remove_edge_helper(edge, edge._head_node_id)
         
     def __remove_edge_helper(self, edge:EdgeSpec, node_id:str):
         node = self.get_child_node_by_id(node_id)
@@ -388,7 +411,8 @@ class GraphSpec:
                 found_match = True
                 break
         if found_match:
-            self.disconnect_node_and_edge(node, port_type, port_name, edge_id)
+            port = node.ports[(port_type, port_name)]
+            self.disconnect_port_from_edge(port, edge)
         else:
             raise ValueError(f"Edge '{edge.id}' is not connected to node '{node.rich_id}'.")
     
@@ -417,9 +441,9 @@ class GraphSpec:
     def copy(self) -> GraphSpec:
         graph = GraphSpec(self._port_specs, inherit_base_component_ports=False)
         for node in self._nodes.values():
-            graph.add_node(node.component_type, id=node.id, node_type=node.node_type)
+            graph.add(node.copy())
         for edge in self._edges.values():
-            graph.add_edge(edge.maxsize, id=edge.id)
+            graph.add(edge.copy())
         for node in self._nodes.values():
             for port_id, edge in node.edge_connections.items():
                 _node_port = graph.get_child_node_by_id(node.id).ports[port_id]

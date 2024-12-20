@@ -22,19 +22,20 @@ from .packet_registry import TrackedPacket, PacketRegistry
 from ..exceptions import ComponentError
 
 # %% auto 0
-__all__ = ['Address', 'Edge', 'BaseNodePort', 'NodePortCollection', 'BaseNode', 'Node']
+__all__ = ['Address', 'Edge', 'BaseNode', 'Node']
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 5
 Address = NewType('Address', str)
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 7
-location_uuid_entitities: Dict[LocationUUID, Edge|Node] = {}
+location_uuid_entitities: Dict[LocationUUID, Edge|BaseNode] = {}
 
 def get_location_uuid(entity) -> LocationUUID:
     uuid_int = uuid.uuid4().hex
     location_uuid_entitities[uuid_int] = entity
+    return uuid_int
     
-def lookup_location_uuid(uuid_int:LocationUUID) -> Edge|Node:
+def lookup_location_uuid(uuid_int:LocationUUID) -> Edge|BaseNode:
     return location_uuid_entitities[uuid_int]
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 9
@@ -76,6 +77,11 @@ class Edge:
         else: return None
     
     @property
+    def tail_is_graph(self) -> bool: return self.spec.tail_is_graph
+    @property
+    def head_is_graph(self) -> bool: return self.spec.head_is_graph
+    
+    @property
     def tail(self) -> BaseNode:
         if self._parent_net is None: raise RuntimeError("Cannot use Edge.tail when its GraphComponent process does not have a parent node.")
         if self._edge_spec.tail:
@@ -85,14 +91,11 @@ class Edge:
     @property
     def tail_port(self) -> NodePort:
         if self.tail_is_connected:
-            tail = self._parent_graph_comp_process if type(self._edge_spec.tail) == GraphSpec else self._parent_graph_comp_process.nodes[self._edge_spec.tail.id]
+            if type(self._edge_spec.tail) == GraphSpec:
+                tail = self._parent_graph_comp_process._parent_node if self._parent_graph_comp_process._parent_node else self._parent_graph_comp_process
+            else: tail = self._parent_graph_comp_process.nodes[self._edge_spec.tail.id]
             return tail.ports[self._edge_spec._tail_node_port_id]
         else: return None
-        
-    @property
-    def tail_is_connected(self) -> bool: return self.tail is not None
-    @property
-    def head_is_connected(self) -> bool: return self.head is not None
     
     @property
     def head(self) -> BaseNode:
@@ -104,9 +107,16 @@ class Edge:
     @property
     def head_port(self) -> NodePort:
         if self.head_is_connected:
-            head = self._parent_graph_comp_process if type(self._edge_spec.head) == GraphSpec else self._parent_graph_comp_process.nodes[self._edge_spec.head.id]
+            if type(self._edge_spec.head) == GraphSpec:
+                head = self._parent_graph_comp_process._parent_node if self._parent_graph_comp_process._parent_node else self._parent_graph_comp_process
+            else: head = self._parent_graph_comp_process.nodes[self._edge_spec.head.id]
             return head.ports[self._edge_spec._head_node_port_id]
         else: return None
+        
+    @property
+    def tail_is_connected(self) -> bool: return self.tail is not None
+    @property
+    def head_is_connected(self) -> bool: return self.head is not None
         
     def start(self):
         self._edge_in_bus_task = self.task_manager.create_task(self._edge_in_bus())
@@ -120,9 +130,7 @@ class Edge:
         packet = None
         if not self.tail_is_connected: return # TODO: Allow for attaching the tail and head after creation
         while True:
-            packet_putted = self.tail_port.states.put_awaiting.get_state_event(True)
-            edge_non_full = self.states.full.get_state_event(False)
-            await await_multiple_events(packet_putted, edge_non_full)
+            await self.states.full.wait(False)
             packet = await self.tail_port._get()
             if not self._packet_registry.is_registered(packet):
                 packet = TrackedPacket(packet, self.tail.loc_uuid, self._packet_registry)
@@ -136,9 +144,6 @@ class Edge:
         packet = None
         if not self.head_is_connected: return
         while True:
-            packet_getted = self.head_port.states.get_awaiting.get_state_event(True)
-            edge_non_empty = self.states.empty.get_state_event(False)
-            await await_multiple_events(packet_getted, edge_non_empty)
             packet = await self._packets.get()
             if packet is not None:
                 await self.head_port._put(packet)
@@ -150,6 +155,18 @@ class Edge:
     @property
     def address(self) -> Address:
         return f"{self._parent_net.address}{Edge._address_delimiter}{self.id}"
+    
+    def __repr__(self) -> str:
+        if self._parent_net:
+            _head_conn = "_" if not self.head_is_connected else f"{self.head.id}:{self.head_port.id_str}"
+            _tail_conn = "_" if not self.tail_is_connected else f"{self.tail.id }:{self.tail_port.id_str}"
+            if not self.spec.is_maxsize_finite:
+                _edge_spec_label = f"Edge[{self.id}]"
+            else:
+                _edge_spec_label = f"Edge[{self.id}, maxsize={self.maxsize}]"
+            return f"{_edge_spec_label}: {_tail_conn} >> {_head_conn}"
+        else:
+            return f"Edge[{self.id}]: Not in a net"
 
 # %% ../../nbs/api/01_graph/02_net.ipynb 11
 class BaseNodePort(BasePort):
@@ -195,6 +212,9 @@ class BaseNodePort(BasePort):
     @abstractproperty
     def packet_registry(self) -> PacketRegistry: ...
     
+    def __repr__(self) -> str:
+        return f"{self.parent_node.address}{BaseNodePort._address_delimiter}{self.port_type.label}.{self.name}"
+    
     @abstractmethod
     async def _put(self, packet:BasePacket): ...
     @abstractmethod
@@ -208,7 +228,7 @@ class BaseNodePort(BasePort):
     @abstractmethod
     async def _get_and_consume_to_external(self) -> Any: ...
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 13
+# %% ../../nbs/api/01_graph/02_net.ipynb 14
 class NodePort(BaseNodePort):
     """Ports in a Node will be converted to NodePorts. This is to facilitate addressing. It's mostly cosmetics."""
     _address_delimiter = ':'
@@ -272,17 +292,17 @@ class NodePort(BaseNodePort):
         packet: TrackedPacket = await self._get_to_external()
         return await packet.consume()
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 15
+# %% ../../nbs/api/01_graph/02_net.ipynb 16
 class NodePortCollection(PortCollection):
     def __init__(self, *, _port_collection:PortCollection, _parent_node:BaseNode):
         self._port_spec_collection: PortSpecCollection = _port_collection._port_spec_collection
         self._ports: Dict[str, NodePort] = {}
         for port_type in PortType:
-            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortCollection.__name__}.{port_type.label}", dtype=NodePort))
+            setattr(self, port_type.label, AttrContainer({}, obj_name=f"{PortCollection.__name__}.{port_type.label}"))
         for port in _port_collection.iter_ports():
             self._add_port(NodePort(_port=port, _parent_node=_parent_node))
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 17
+# %% ../../nbs/api/01_graph/02_net.ipynb 18
 class BaseNode(ABC):
     TOP_NODE_ID = 'TOP'
     _address_delimiter = '->'
@@ -308,7 +328,7 @@ class BaseNode(ABC):
         return BaseNode.TOP_NODE_ID
     @property
     def is_net(self) -> bool:
-        return issubclass(self.spec.component_type, fbdev.graph.graph_component.GraphComponentFactory) and self.spec.component_type.expose_graph
+        return issubclass(self.spec.component_type, fbdev.graph.graph_component.GraphComponentFactory)
     @property
     def is_top_node(self) -> bool: return self.parent_net is None
     @property
@@ -322,7 +342,9 @@ class BaseNode(ABC):
     @property
     def loc_uuid(self) -> LocationUUID: return self._loc_uuid
     @abstractproperty
-    def edge_connections(self) -> MappingProxyType[PortID, Edge]: ...
+    def edge_connections(self) -> Dict[PortID, Edge]: ...
+    @abstractproperty
+    def internal_edge_connections(self) -> Dict[PortID, Edge]: ...
     @property
     def component_type(self) -> Type[BaseComponent]: return self.spec.component_type
     @property
@@ -371,7 +393,7 @@ class BaseNode(ABC):
     async def send_signal(self, name:str):
         await self.ports.signal[name].put(Packet.get_empty())
 
-# %% ../../nbs/api/01_graph/02_net.ipynb 19
+# %% ../../nbs/api/01_graph/02_net.ipynb 20
 class Node(BaseNode):
     def __init__(self, node_spec: NodeSpec, parent_net:Node|None=None) -> None:
         super().__init__(node_spec, parent_net)
@@ -393,9 +415,14 @@ class Node(BaseNode):
     @property
     def ports(self) -> PortCollection: return self._ports
     @property
-    def edge_connections(self) -> MappingProxyType[PortID, Edge]:
-        edges = {port_id : self._parent_graph.edges[edge_id] for port_id, edge_id in self._edge_connections.items()}
-        return MappingProxyType(edges)
+    def edge_connections(self) -> Dict[PortID, Edge]:
+        edges = {port_id : self.parent_net.edges[edge_spec.id] for port_id, edge_spec in self.spec.edge_connections.items()}
+        return edges
+    @property
+    def internal_edge_connections(self) -> Dict[PortID, Edge]:
+        if not self.is_net: raise RuntimeError("Node is not a net.")
+        edges = {port_id : self.edges[edge_id] for port_id, edge_id in self.component_type.graph._edge_connections.items()}
+        return edges
     @property
     def component_process(self) -> BaseComponent: return self._component_process
     @property

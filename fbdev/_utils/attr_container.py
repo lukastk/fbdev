@@ -62,7 +62,7 @@ class AttrContainer:
         return self._attrs.__len__()
     
     def __str__(self):
-        return f'{self._obj_name}: {", ".join([f"{k}: {v}" for k,v in self._attrs.items()])}'
+        return f'{self._obj_name}: {", ".join([f"{k}: {v}" for k,v in self._attrs.items() if not k.startswith("_")])}'
     
     def __repr__(self):
         return self.__str__()

@@ -51,14 +51,17 @@ class GraphComponentFactory(BaseComponent, inherit_ports=False):
         except EdgeError as e: self.task_manager.submit_exception(task, exceptions + (e,), source_trace, tracebacks)
     
     @classmethod
-    def create_component(cls, graph, expose_graph=True) -> Type[BaseComponent]:
+    def create_component(cls, graph, expose_graph=True, component_name:str=None) -> Type[BaseComponent]:
         graph = graph.copy()
         graph.make_readonly()
-        return cls._create_component_class(class_attrs={
-            'graph' : graph,
-            'expose_graph' : expose_graph,
-            'port_specs' : graph._port_specs
-        })
+        return cls._create_component_class(
+            component_name=component_name,
+            class_attrs={
+                'graph' : graph,
+                'expose_graph' : expose_graph,
+                'port_specs' : graph._port_specs
+            }
+        )
         
     async def _post_start(self):
         for node_spec in self.graph.nodes.values():

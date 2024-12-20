@@ -114,7 +114,7 @@ class BaseComponent(ABC):
     
     @classmethod
     def _create_component_class(cls,
-                                component_name=None,
+                                component_name,
                                 class_attrs={},
                                 init_args=[],
                                 init_kwargs={}) -> Type[BaseComponent]:

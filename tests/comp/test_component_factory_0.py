@@ -22,9 +22,12 @@ class MyComponentFactory(BaseComponent):
 
     @classmethod
     def create_component(cls, my_attr) -> Type[BaseComponent]:
-        return cls._create_component_class(class_attrs={
-            'my_attr' : my_attr
-        })
+        return cls._create_component_class(
+            component_name='MyComponent',
+            class_attrs={
+                'my_attr' : my_attr
+            }
+        )
     
     async def _post_start(self):
         print(self.my_attr)

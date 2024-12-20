@@ -70,7 +70,7 @@ class StateHandler:
         return self.get_state_toggle_event(self._current_state, target_value=False)
     
     def __str__(self):
-        return f"State {self.name}: {self.get()}"
+        return f"State: {self.name}={self.get()}"
     
     def __repr__(self):
         return self.__str__()
@@ -115,3 +115,6 @@ class StateCollection(AttrContainer):
             self._set(f"{state_handler.name}", StateView(state_handler))
         else:
             self._set(state_handler.name, state_handler)
+            
+    def __str__(self):
+        return f'{self._obj_name}: {", ".join([f"{k}={v.get()}" for k,v in self._attrs.items() if not k.startswith("_")])}'

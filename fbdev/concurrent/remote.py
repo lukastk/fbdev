@@ -493,7 +493,8 @@ class ProxyNode(BaseNode):
         
         self._port_proxies = ProxyPortCollection(self.component_type.port_specs, self, self._handle, self._remote, self._task_manager)
         
-        self._remote.sync_do('main', 'create_node', self.spec)
+        node_spec_copy = self.spec.copy() # In particular, this removes node_spec._parent_graph, which would otherwise make the node spec unpickleable
+        self._remote.sync_do('main', 'create_node', node_spec_copy)
         
     async def await_initialised(self):
         await asyncio.gather(*[port.await_initialised() for port in self.ports.iter_ports()])
@@ -503,7 +504,21 @@ class ProxyNode(BaseNode):
     @property
     def ports(self) -> PortCollection: return self._port_proxies
     @property
-    def edge_connections(self) -> MappingProxyType[PortID, Edge]: ...
+    def edge_connections(self) -> Dict[PortID, Edge]:
+        edges = {port_id : self.parent_net.edges[edge_spec.id] for port_id, edge_spec in self.spec.edge_connections.items()}
+        return edges
+    @property
+    def internal_edge_connections(self) -> Dict[PortID, Edge]:
+        raise NotImplementedError("Not available for ProxyNode.")
+    @property
+    def nodes(self) -> MappingProxyType[str, BaseNode]:
+        if not self.is_net: raise RuntimeError("Node is not a net.")
+        raise NotImplementedError("Not available for ProxyNode.")
+    @property
+    def edges(self) -> MappingProxyType[str, Edge]:
+        if not self.is_net: raise RuntimeError("Node is not a net.")
+        raise NotImplementedError("Not available for ProxyNode.")
+    
     @property
     def component_process(self) -> BaseComponent:
         raise RuntimeError(f"{self.__class__.__name__} does not have a component_process.")

@@ -30,7 +30,6 @@ class ExecComponent(BaseComponent):
         self._main_task: asyncio.Task = None
     
     async def _post_start(self):
-        self.task_manager.create_task(self._pre_execute())
         if self.execute_after_start:
             self.task_manager.create_task(
                 self.ports[(PortType.SIGNAL, 'execute')]._put(Packet.get_empty())

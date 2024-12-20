@@ -6,7 +6,7 @@ class MyComponentFactory(BaseComponent):
 
     @classmethod
     def create_component(cls) -> Type[BaseComponent]:
-        return cls._create_component_class(class_attrs={})
+        return cls._create_component_class(component_name='MyComponent', class_attrs={})
         
 comp_with_module_set = MyComponentFactory.create_component()
 comp_with_module_set.set_module()
