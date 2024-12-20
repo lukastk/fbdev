@@ -1,6 +1,15 @@
 # Changelog
 
 
+
+## [0.0.5] - 2024-12-20
+ 
+### Fixed
+
+- Fixed NodeProcess.gather_outputs
+
+
+
 ## [0.0.4] - 2024-12-20
  
 ### Added
