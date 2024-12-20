@@ -72,7 +72,7 @@ class NodeProcess(BaseRuntime):
                 _ports.extend([port]*count)
             else:
                 _ports.append(element)
-        ports = [self.ports.output[port] if isinstance(port, str) else port for port in _ports]
+        ports = [self.ports[PortType.OUTPUT, port] if isinstance(port, str) else port for port in _ports]
         for port in ports:
             if not port in self._ports.get_all():
                 raise ValueError(f"User provided port {port} that was not found in {self.__class__.__name__}.")
